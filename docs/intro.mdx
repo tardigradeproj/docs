@@ -6,14 +6,15 @@ slug: /
 # Introduction
 
 import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
-<ThemedImage
-  alt="Heir"
-  sources={{
-    light: '/img/Heir-Logo-Lockup.svg',
-    dark: '/img/Heir-Logo-Lockup-Reversed.svg',
-  }}
-/>
+export const HeirLogo = () => {
+  const light = useBaseUrl('/img/Heir-Logo-Lockup.svg');
+  const dark = useBaseUrl('/img/Heir-Logo-Lockup-Reversed.svg');
+  return <ThemedImage alt="Heir" sources={{ light, dark }} />;
+};
+
+<HeirLogo />
 
 Heir is an open source Kubernetes distribution designed to make it easy to operate and run Kubernetes clusters at scale. Unlike traditional distributions that
 scatter control plane components across dedicated nodes, Heir collapses the entire control plane into a single stateless pod running inside a Management

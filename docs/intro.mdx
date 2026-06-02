@@ -5,30 +5,48 @@ slug: /
 
 # Introduction
 
-Heir is an open source Kubernetes distribution designed to make easy to operate and run Kubernetes Cluster at scale. Hair runs Control Plane components as
-[monolithic](https://en.wikipedia.org/wiki/Monolithic_application) application in a single Kubernetes stateless pod within Management Kubernetes Cluster, which can be any conformant Kubernetes
-distribution, allowing enterprises to only be concerned about control plane availability once (when designing Management Cluster). The data plane on its turn
-is a single binary that packages almost everything (Linux kernel and modules aren't part of the package) that's necessary to run a Kubernetes Worker Node, and can
-be run on Bare metal, container, Air-gapped environments, Public Cloud or simply anywhere.
+import ThemedImage from '@theme/ThemedImage';
 
-In addition to reducing Kubernetes cluster operating costs, although still under development, Heir's philosophy departs from Vanilla Kubernetes and
-other traditional distributions. The vision is to make worker nodes, worker nodes, capisce?
+<ThemedImage
+  alt="Heir"
+  sources={{
+    light: '/img/Heir-Logo-Lockup.svg',
+    dark: '/img/Heir-Logo-Lockup-Reversed.svg',
+  }}
+/>
 
-Making worker nodes truly worker nodes means dedicating data planes exclusively to running workloads. Operators and addons run in the
-management cluster, cleanly separated from the resources they manage. This separation is intentional: it enables a single operator instance to govern multiple data planes simultaneously.
+Heir is an open source Kubernetes distribution designed to make it easy to operate and run Kubernetes clusters at scale. Unlike traditional distributions that
+scatter control plane components across dedicated nodes, Heir collapses the entire control plane into a single stateless pod running inside a Management
+Kubernetes Cluster. That management cluster can be any conformant Kubernetes distribution, so each tenant cluster inherits the availability guarantees of
+whatever management infrastructure you already run. Operators, add-ons, and cluster controllers all live there, cleanly separated from the workloads they
+manage, and because they run centrally, a single operator instance can govern any number of data planes simultaneously, dramatically reducing the total footprint
+required to manage large fleets of clusters.
 
-Making worker nodes truly worker nodes means dedicating data planes exclusively to running application workloads. Operators and addons run in the management
-cluster, cleanly separated from the resources they manage, enabling a single operator instance to govern multiple data planes simultaneously. Heir is an
-efficient and cost-effective way to run multi-tenant Kubernetes at scale.
+The data plane is a self-contained binary that packages almost everything required to run a Kubernetes worker node, with the exception of the Linux kernel and
+its modules. Nodes in the data plane are purpose-built for compute: they run workloads and nothing else, with no co-located operators, no add-on sidecars, and
+no control plane processes competing for resources with your applications. This binary can be deployed on bare metal servers, containers, air-gapped
+environments, public cloud instances, or any other compute substrate. Because the management cluster owns everything that is not a workload, the blast radius of
+a misbehaving operator or add-on is fully contained there and never reaches the nodes running your production workloads.
+
+
+## Philosophy
+
+Heir takes a different approach to how cluster add-ons and operators are deployed. In many Kubernetes setups, components like monitoring agents, network
+controllers, and storage operators run directly on worker nodes, which works well when those components need to be close to the workload. For add-ons that can
+run remotely, however, Heir moves them to the management cluster instead, keeping data plane nodes focused on application workloads.
+
+This separation reduces resource contention on worker nodes, simplifies node lifecycle management, and allows a single operator instance to serve multiple data
+planes at once. It is a deliberate trade-off suited for environments where centralized management is practical, and it is the foundation on which most of Heir's
+operational properties are built.
 
 
 ## Why Heir?
 
-* **Low cost** — minimizes infrastructure overhead by collapsing control plane components into a single stateless pod
-* **No 3-node HA tax** — runs a highly available cluster without the traditional minimum node requirement
-* **Single artifact** — distributed as a self-contained binary and Docker image with everything needed to run a cluster
-* **Operator-friendly** — no deep Kubernetes expertise required to operate at scale
-* **Secure by default** — reduced attack surface, as everything Heir needs to run is managed and contained within Heir itself
-* **Automated operations** — certificate renewal and cluster upgrades are handled automatically
-* **Bring your own everything** — pluggable components let you integrate your existing tools and infrastructure
-
+* **Low cost**: minimizes infrastructure overhead by collapsing control plane components into a single stateless pod
+* **No 3-node HA tax**: runs a highly available cluster without the traditional minimum node requirement
+* **Single artifact**: distributed as a self-contained binary and Docker image with everything needed to run a cluster
+* **Operator-friendly**: no deep Kubernetes expertise required to operate at scale
+* **Secure by default**: reduced attack surface, as everything Heir needs to run is managed and contained within the management cluster
+* **Automated operations**: certificate renewal and cluster upgrades are handled automatically
+* **Bring your own everything**: pluggable components let you integrate your existing tools and infrastructure
+* **Fleet-scale management**: a single management cluster can govern hundreds of data plane clusters with no additional operator instances

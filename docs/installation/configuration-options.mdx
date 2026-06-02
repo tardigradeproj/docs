@@ -1,0 +1,270 @@
+---
+sidebar_position: 3
+---
+
+# Configuration Options
+
+## Overview
+
+Heir tooling is design to manage clusters lifecycle using both CLI tool and Kubernetes Operator, regardless of the chosen mechanism the configuration
+is made through a `Runtime` custom resource written in YAML. The spec is split into two top-level sections:
+
+- `controlPlane` — controls how the tenant control plane is deployed inside the management cluster (image, replicas, service exposure)
+- `upstreamCluster` — controls the Kubernetes cluster itself (networking, storage, API server configuration, worker node settings)
+
+```yaml
+kind: Runtime
+metadata:
+  name: my-cluster
+  namespace: default
+spec:
+  controlPlane: ...
+  upstreamCluster: ...
+```
+
+---
+
+## spec.controlPlane
+
+Configures the Deployment and Service created in the management cluster to host the Heir control plane.
+
+### controlPlane.heir
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `image` | string | Fully qualified container image for the Heir control plane, e.g. `ghcr.io/tardigradeproj/heir:v1.2.3` |
+
+### controlPlane.deployment
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `replicas` | integer | `1` | Desired number of control plane pod replicas |
+| `serviceAccountName` | string | `default` | ServiceAccount mounted into the control plane pods |
+| `runtimeClassName` | string | — | References a RuntimeClass that controls which container runtime is used. Omit to use the cluster default |
+| `tolerations` | [][Toleration](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/) | — | Tolerations applied to the control plane pods. See [Kubernetes docs](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/) |
+| `affinity` | Affinity | — | Scheduling constraints for the control plane pods. See [Kubernetes docs](https://kubernetes.io/docs/tasks/configure-pod-container/assign-pods-nodes-using-node-affinity/) |
+| `additionalMetadata.labels` | map[string]string | — | Extra labels added to the Deployment |
+| `additionalMetadata.annotations` | map[string]string | — | Extra annotations added to the Deployment |
+
+### controlPlane.service
+
+Controls how the tenant control plane is exposed outside the management cluster.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `serviceType` | string | `NodePort` | How the Service is exposed. One of `NodePort`, `ClusterIP`, `LoadBalancer`, `ExternalName` |
+| `apiServerNodePort` | integer | `30080` | NodePort assigned to the API server port. Only applies when `serviceType` is `NodePort` |
+| `konnectivityNodePort` | integer | `30081` | NodePort assigned to the Konnectivity proxy port. Only applies when `serviceType` is `NodePort` |
+| `additionalPorts` | [][AdditionalPort](#additionalports) | — | Extra ports added to the Service beyond the default API server and Konnectivity ports |
+| `additionalMetadata.labels` | map[string]string | — | Extra labels added to the Service |
+| `additionalMetadata.annotations` | map[string]string | — | Extra annotations added to the Service |
+
+#### additionalPorts
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | — | Port name within the Service. Must be unique across all ports |
+| `port` | integer | — | Port number exposed by the Service |
+| `targetPort` | integer or string | — | Port number or named port on the control plane pod that receives this traffic |
+| `protocol` | string | `TCP` | IP protocol for this port. One of `TCP`, `UDP`, `SCTP` |
+| `appProtocol` | string | — | Hint to implementations about the application-layer protocol on this port, e.g. `https` |
+
+---
+
+## spec.upstreamCluster
+
+Defines the configuration for Heir Kubernetes cluster being created, including networking, storage, and individual component settings.
+
+### upstreamCluster.controlPlaneEndpoint
+
+Describes the addresses and ports through which worker nodes reach the API server and Konnectivity proxy.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `addresses` | []string | — | IP addresses or hostnames of the hosts exposing the control plane, e.g. the NodePort addresses of the management cluster nodes. Must not include protocol or port |
+| `apiServer.port` | integer | `30080` | Port on the above addresses that exposes the Kubernetes API server |
+| `konnectivity.port` | integer | `30081` | Port on the above addresses that exposes the Konnectivity proxy server |
+
+### upstreamCluster.apiServer
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sans` | []string | Additional Subject Alternative Names added to the API server's serving certificate. Use this to include load-balancer IPs, external hostnames, or any address through which clients reach the API server |
+| `extraArgs` | map[string]string | Extra flags passed directly to `kube-apiserver`. Keys are flag names without the leading `--` |
+
+### upstreamCluster.controllerManager
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `extraArgs` | map[string]string | Extra flags passed directly to `kube-controller-manager`. Keys are flag names without the leading `--` |
+
+### upstreamCluster.scheduler
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `extraArgs` | map[string]string | Extra flags passed directly to `kube-scheduler`. Keys are flag names without the leading `--` |
+
+### upstreamCluster.network
+
+Configures pod and service networking, the CNI plugin, and the Konnectivity proxy for the tenant cluster.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `podCIDR` | string | `10.244.0.0/16` | IP range from which pod IP addresses are allocated |
+| `serviceCIDR` | string | `10.96.0.0/16` | IP range from which ClusterIP service addresses are allocated |
+| `cni.supplier` | string | `flannel` | CNI plugin to install in the tenant cluster. One of `flannel`, `custom` |
+
+#### network.konnectivity
+
+Konnectivity provides a tunneled network proxy between the API server and worker nodes, required when worker nodes cannot directly reach the control plane.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `true` | Whether to deploy the Konnectivity proxy. Set to `false` only when worker nodes have direct network access to the control plane |
+| `server.image` | string | `registry.k8s.io/kas-network-proxy/proxy-server:v0.0.37` | Container image for the Konnectivity server, which runs alongside the API server |
+| `server.resources` | [ResourceRequirements](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) | — | CPU and memory requests and limits for the Konnectivity server container |
+| `server.extraArgs` | map[string]string | — | Extra flags passed directly to the Konnectivity server process |
+| `agent.image` | string | `registry.k8s.io/kas-network-proxy/proxy-agent:v0.0.37` | Container image for the Konnectivity agent deployed on worker nodes |
+| `agent.mode` | string | `DaemonSet` | How the agent is deployed on worker nodes. `DaemonSet` runs one pod per node; `Deployment` uses a fixed replica count set via `replicas` |
+| `agent.replicas` | integer | — | Number of agent pods when `mode` is `Deployment`. Must be unset when `mode` is `DaemonSet` |
+| `agent.hostNetwork` | boolean | `true` | Run agent pods in the host network namespace. Enables the agent to reach the control plane before CNI is initialized |
+| `agent.tolerations` | [][Toleration](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/) | `[{key: CriticalAddonsOnly, operator: Exists}]` | Tolerations applied to agent pods, allowing scheduling on tainted nodes such as nodes not yet fully ready |
+| `agent.extraArgs` | map[string]string | — | Extra flags passed directly to the Konnectivity agent process |
+
+### upstreamCluster.storage
+
+Configures the storage backend used by the tenant API server in place of etcd.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `type` | string | `kine` | Storage backend to use. Currently only `kine` is supported |
+| `kine.dataSourceRef` | SecretKeySelector | — | Reference to a Secret key whose value is the kine data source URL, e.g. a SQLite file path or a PostgreSQL connection string. When omitted, kine uses its default SQLite storage location |
+
+**Example — `kine.dataSourceRef`:**
+
+```yaml
+storage:
+  type: kine
+  kine:
+    dataSourceRef:
+      name: my-db-secret   # name of the Kubernetes Secret
+      key: connection-url  # key within the Secret whose value is the data source URL
+```
+
+### upstreamCluster.kubelet
+
+Configuration applied to kubelet on every worker node that joins this tenant cluster.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `extraArgs` | map[string]string | Extra flags passed directly to the `kubelet` process. Keys are flag names without the leading `--` |
+| `configPatches` | string | Partial `KubeletConfiguration` document strategically merged on top of the default kubelet configuration written to worker nodes. Only the fields you specify are overridden |
+
+**Example — `configPatches`:**
+
+```yaml
+kubelet:
+  configPatches: |
+    maxPods: 200
+    evictionHard:
+      memory.available: "100Mi"
+      nodefs.available: "10%"
+    kubeReserved:
+      cpu: "250m"
+      memory: "256Mi"
+```
+
+### upstreamCluster.extraResources
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `objects` | []RawExtension | List of arbitrary Kubernetes manifests applied to the tenant cluster once its API server becomes available. Any valid Kubernetes object is accepted |
+
+---
+
+## Full Example
+
+```yaml
+kind: Runtime
+metadata:
+  name: my-cluster
+  namespace: default
+spec:
+  controlPlane:
+    heir:
+      image: ghcr.io/tardigradeproj/heir:latest
+    deployment:
+      replicas: 1
+      serviceAccountName: default
+    service:
+      serviceType: NodePort
+      apiServerNodePort: 30080
+      konnectivityNodePort: 30081
+  upstreamCluster:
+    controlPlaneEndpoint:
+      addresses:
+        - "127.0.0.1"
+      apiServer:
+        port: 30080
+      konnectivity:
+        port: 30081
+    network:
+      podCIDR: "10.244.0.0/16"
+      serviceCIDR: "10.96.0.0/16"
+      cni:
+        supplier: flannel
+      konnectivity:
+        enabled: true
+    storage:
+      type: kine
+    apiServer:
+      extraArgs:
+        audit-log-maxage: "30"
+    kubelet:
+      extraArgs:
+        max-pods: "110"
+```
+
+---
+
+## Extra Resources
+
+Heir's philosophy is to provision only what is necessary for a cluster to be considered functional. Unlike distributions that bundle a large set of addons by
+default, Heir ships lean, this reduces the vulnerability surface and avoids wasting resources on tooling that may never be used. Engineers bring addons to
+their clusters based on their own requirements.
+
+To support teams that want to provision clusters upfront with a known set of addons, `extraResources` allows manifests to be defined directly in the `Runtime` spec.
+These resources are created and continuously synced from bootstrap, ensuring that every cluster of a given configuration starts with the same baseline.
+
+```yaml
+upstreamCluster:
+  extraResources:
+    objects:
+      - apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: monitoring
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: my-addon
+          namespace: monitoring
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: my-addon
+          template:
+            metadata:
+              labels:
+                app: my-addon
+            spec:
+              containers:
+                - name: my-addon
+                  image: my-addon:latest
+```
+
+
+:::info
+Heir will soon support bootstrapping clusters with Helm chart definitions, providing greater flexibility for addon management at cluster creation time.
+:::

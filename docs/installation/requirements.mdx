@@ -1,0 +1,60 @@
+---
+sidebar_position: 2
+---
+
+# Requirements
+
+Heir has two base requirements, the first is regarding the underlying Kubernetes Cluster where the control plane runs (the so-called management cluster), and the
+second related to the host where the worker nodes run.
+
+## Architecture
+
+As of now, Heir runs on the following architectures:
+
+* x86_64
+* arm64/aarch64
+
+## Operating System
+
+Although it can run in more operating systems, Heir has been tested against the operating systems listed below:
+* Ubuntu - 22, 24 LTS
+* Amazon Linux - 2023
+
+## Management Cluster
+
+The management cluster hosts the Heir control plane. Any conformant Kubernetes distribution works.
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| Kubernetes version | 1.31+ | Latest stable |
+| CPU | 2 vCPUs | 4 vCPUs |
+| Memory | 2 GB | 4 GB |
+
+
+## Worker Nodes (Data Plane)
+
+Each worker node runs the Heir data plane binary.
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| CPU | 1 vCPU | 2+ vCPUs |
+| Memory | 512 MB | 2+ GB |
+| OS | Linux (kernel 5.4+) | Linux (kernel 6.x) |
+
+## Network
+
+Heir's network model is intentionally simple: all connections are initiated by worker nodes toward the control plane. The control plane never needs to
+reach worker nodes directly, requests from the control plane to workloads running on workers are performed through multiplexing over
+the same outbound connection established by the worker. This means Heir works correctly in air-gapped environments, edge computing deployments,
+and in topologies where the control plane and worker nodes live in separate networks, as long as workers can reach the control plane endpoints.
+Heir workers perfectly well in scenarios where worker nodes sit behind firewalls or NAT with no inbound rules required, making it straightforward
+to manage worker nodes from control planes running on Highly Available Managed Kubernetes services (EKS, GKE, AKS, DOKS, etc...) acting as Management Cluster.
+
+Heir is distributed with [Flannel](https://github.com/flannel-io/flannel) as the default CNI plugin for pod networking.
+
+| Protocol | Port | Source | Destination | Description |
+|----------|------|--------|-------------|-------------|
+| TCP | configured via [`upstreamCluster.controlPlaneEndpoint.apiServer.port`](./configuration-options#upstreamclustercontrolplaneendpoint) | Worker nodes | Control plane | Kubernetes API server |
+| TCP | configured via [`upstreamCluster.controlPlaneEndpoint.konnectivity.port`](./configuration-options#upstreamclustercontrolplaneendpoint) | Worker nodes | Control plane | Control plane to worker node multiplexed communication |
+| UDP | 8472 | Worker nodes | Worker nodes | Flannel VXLAN overlay — pod-to-pod traffic across nodes |
+

@@ -1,0 +1,136 @@
+---
+sidebar_position: 1
+---
+
+# Quickstart Guide
+
+Get a working Heir cluster running in minutes using [Kind](https://kind.sigs.k8s.io/) as the management cluster.
+
+### Overview
+
+This guide covers the full setup: creating a management cluster, deploying the Heir control plane into it, and joining a worker node. By the end you will have a functioning Heir cluster you can start scheduling workloads on.
+
+Kind is used here for convenience, but any conformant Kubernetes distribution works as the management cluster.
+
+### Prerequisites
+
+- [Kind](https://kind.sigs.k8s.io/) installed
+- `kubectl` installed and available in your PATH
+
+### 1. Install the Heir CLI
+
+Install Heir on your local machine:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/tardigradeproj/heir/refs/heads/main/install.sh | HEIR_VERSION=latest sh
+```
+
+Verify the installation:
+
+```bash
+heir version
+```
+
+### 2. Create the Management Cluster
+
+Create a Kind cluster with two NodePort mappings — one for the Kubernetes API server and one for Konnectivity, which handles communication between the control plane and worker nodes:
+
+```bash
+cat <<EOF | kind create cluster --name heir-quickstart --kubeconfig="./management-cluster.yaml" --config=-
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraPortMappings:
+  - containerPort: 30080
+    hostPort: 30080
+  - containerPort: 30081
+    hostPort: 30081
+EOF
+```
+
+### 3. Deploy the Control Plane
+
+First, create the Heir configuration file. This tells Heir how to deploy the control plane and which ports to expose. See [Configuration Options](./configuration-options) for a full reference.
+
+```bash
+cat <<\EOF > ./heir.yaml
+kind: Runtime
+metadata:
+  name: heir-quickstart
+  namespace: default
+spec:
+  controlPlane:
+    heir:
+      image: ghcr.io/tardigradeproj/heir:latest
+    deployment:
+      replicas: 1
+    service:
+      serviceType: NodePort
+  upstreamCluster:
+    controlPlaneEndpoint:
+      addresses:
+        - "127.0.0.1" #assuming that the worker node is being configured on the machine where the kind is running
+      apiServer:
+        port: 30080
+      konnectivity:
+        port: 30081
+    storage:
+      type: kine
+EOF
+```
+
+Then deploy the control plane into the management cluster. The `--cluster-kubeconfig` flag specifies where Heir will write the kubeconfig for the new cluster:
+
+```bash
+heir provision controlplane \
+  --kubeconfig ./management-cluster.yaml \
+  --cluster-kubeconfig ./heir-kubeconfig.yaml \
+  --config ./heir.yaml
+```
+
+Once the command completes, verify the cluster is up:
+
+```bash
+kubectl --kubeconfig=./heir-kubeconfig.yaml get nodes
+```
+
+### 4. Join a Worker Node
+
+The following steps run on the machine you want to use as a worker node.
+
+**Install Heir on the worker node:**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/tardigradeproj/heir/refs/heads/main/install.sh | HEIR_VERSION=latest sh
+```
+
+**Generate a join token** from your local machine (where `heir-kubeconfig.yaml` lives):
+
+```bash
+heir token generate \
+  --kubeconfig ./heir-kubeconfig.yaml \
+  --name heir-quickstart@kubernetes \
+  --expiry 3h
+```
+
+**Join the worker node** using the token printed by the previous command:
+
+```bash
+sudo heir provision worker --token="<JOIN-TOKEN>"
+```
+
+### 5. Verify
+
+From your local machine, confirm the worker node has joined and is ready:
+
+```bash
+kubectl --kubeconfig ./heir-kubeconfig.yaml get nodes
+```
+
+You should see your worker node listed with status `Ready`.
+
+## Next Steps
+
+- Review [Requirements](./requirements) for production deployments
+- Explore [Configuration Options](./configuration-options) to customize your setup

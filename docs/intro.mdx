@@ -1,0 +1,33 @@
+---
+sidebar_position: 1
+---
+
+# Introduction
+
+Heir is an open source Kubernetes distribution designed to make easy to operate and run Kubernetes Cluster at scale. Hair runs Control Plane components as
+[monolithic](https://en.wikipedia.org/wiki/Monolithic_application) application in a single Kubernetes stateless pod within Management Kubernetes Cluster, which can be any conformant Kubernetes
+distribution, allowing enterprises to only be concerned about control plane availability once (when designing Management Cluster). The data plane on its turn
+is a single binary that packages almost everything (Linux kernel and modules aren't part of the package) that's necessary to run a Kubernetes Worker Node, and can
+be run on Bare metal, container, Air-gapped environments, Public Cloud or simply anywhere.
+
+In addition to reducing Kubernetes cluster operating costs, although still under development, Heir's philosophy departs from Vanilla Kubernetes and
+other traditional distributions. The vision is to make worker nodes, worker nodes, capisce?
+
+Making worker nodes truly worker nodes means dedicating data planes exclusively to running workloads. Operators and addons run in the
+management cluster, cleanly separated from the resources they manage. This separation is intentional: it enables a single operator instance to govern multiple data planes simultaneously.
+
+Making worker nodes truly worker nodes means dedicating data planes exclusively to running application workloads. Operators and addons run in the management
+cluster, cleanly separated from the resources they manage, enabling a single operator instance to govern multiple data planes simultaneously. Heir is an
+efficient and cost-effective way to run multi-tenant Kubernetes at scale.
+
+
+## Why Heir?
+
+* **Low cost** — minimizes infrastructure overhead by collapsing control plane components into a single stateless pod
+* **No 3-node HA tax** — runs a highly available cluster without the traditional minimum node requirement
+* **Single artifact** — distributed as a self-contained binary and Docker image with everything needed to run a cluster
+* **Operator-friendly** — no deep Kubernetes expertise required to operate at scale
+* **Secure by default** — reduced attack surface, as everything Heir needs to run is managed and contained within Heir itself
+* **Automated operations** — certificate renewal and cluster upgrades are handled automatically
+* **Bring your own everything** — pluggable components let you integrate your existing tools and infrastructure
+

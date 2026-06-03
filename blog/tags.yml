@@ -1,19 +1,19 @@
-facebook:
-  label: Facebook
-  permalink: /facebook
-  description: Facebook tag description
+kubernetes:
+  label: Kubernetes
+  permalink: /kubernetes
+  description: Kubernetes ecosystem, distributions, and operations.
 
-hello:
-  label: Hello
-  permalink: /hello
-  description: Hello tag description
+heir:
+  label: Heir
+  permalink: /heir
+  description: Heir project updates, design decisions, and releases.
 
-docusaurus:
-  label: Docusaurus
-  permalink: /docusaurus
-  description: Docusaurus tag description
+platform-engineering:
+  label: Platform Engineering
+  permalink: /platform-engineering
+  description: Building and operating internal developer platforms at scale.
 
-hola:
-  label: Hola
-  permalink: /hola
-  description: Hola tag description
+open-source:
+  label: Open Source
+  permalink: /open-source
+  description: Open source community, contributions, and projects.

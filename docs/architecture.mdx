@@ -8,7 +8,7 @@ sidebar_position: 3
 
 Organizations adopting Kubernetes at scale typically end up managing multiple clusters, whether divided by environment, tier, team, or business domain,
 largely due to the weak isolation provided by standard namespaces. In this traditional model, every single cluster carries its own independent stack. This
-includes everything from the control plane (which requires at least three dedicated nodes to satisfy the etcd quorum) to storage, management applications,
+includes everything from the control plane to storage (which requires at least three dedicated nodes to satisfy the etcd quorum), management applications,
 service meshes, dashboards, and observability tooling. Managing this overhead independently requires a continuous cycle of upgrades, health checks, and
 maintenance. Scaled across dozens of clusters, this model introduces a massive tax on both your infrastructure budget and engineering velocity.
 

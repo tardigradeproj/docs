@@ -6,19 +6,16 @@ sidebar_position: 3
 
 ## Overview
 
-Organizations that adopt Kubernetes at scale typically end up managing many clusters, one per environment, per tier, per team, or per business domain. In the
-traditional model, every one of those clusters carries its own control plane: at least three dedicated nodes to satisfy the etcd quorum, plus the operational burden
-of keeping each control plane healthy, upgraded, and available independently. Multiply that across dozens of clusters and the cost becomes significant, both in
-infrastructure and in engineering time.
+Organizations adopting Kubernetes at scale typically end up managing multiple clusters, whether divided by environment, tier, team, or business domain,
+largely due to the weak isolation provided by standard namespaces. In this traditional model, every single cluster carries its own independent stack. This
+includes everything from the control plane (which requires at least three dedicated nodes to satisfy the etcd quorum) to storage, management applications,
+service meshes, dashboards, and observability tooling. Managing this overhead independently requires a continuous cycle of upgrades, health checks, and
+maintenance. Scaled across dozens of clusters, this model introduces a massive tax on both your infrastructure budget and engineering velocity.
 
-Heir takes a different approach. Rather than treating the control plane as a fixed part of each cluster's infrastructure, Heir runs control plane components
-as a `single stateless pod` inside a shared management Kubernetes cluster. This shifts the availability problem: platform engineers only need to think about
-control plane availability once, when designing the management cluster. Any additional tenant clusters provisioned on top of it inherit that availability
-automatically, with no extra infrastructure to provision or maintain.
-
-Because the control plane is just another cloud-native application running on Kubernetes, it behaves like one: it can be stopped, rescheduled, and restarted
-without data loss, thanks to an external storage backend. The Kubernetes control plane stops being a seven-headed monster that requires specialist knowledge to
-operate and becomes a workload that any Kubernetes operator already knows how to manage.
+Heir takes a different approach. Rather than treating the control plane as a heavy, fixed piece of infrastructure for every cluster, Heir runs the control
+plane components as a single, stateless pod inside a shared management Kubernetes cluster. This fundamentally shifts the availability problem: platform engineers
+only need to solve for control plane availability once when designing the management cluster. Every additional cluster provisioned on top automatically inherits
+this availability, entirely eliminating the need to provision or maintain duplicate infrastructure.
 
 
 ![Heir cluster architecture](/img/cluster-architecture.svg)
@@ -30,7 +27,9 @@ The two communicate exclusively over connections initiated by worker nodes, the 
 
 ## Control Plane
 
-The Heir control plane packages the standard Kubernetes control plane components (API server, scheduler, controller manager, and the communication proxy) as a single stateless pod running inside a management Kubernetes cluster. The management cluster can be any conformant Kubernetes distribution, including managed services such as EKS, GKE, AKS, or DOKS.
+The Heir control plane packages the standard Kubernetes control plane components (API server, scheduler, controller manager, and the communication proxy) as
+a single stateless pod running inside a management Kubernetes cluster. The management cluster can be any conformant Kubernetes distribution, including managed
+services such as EKS, GKE, AKS, or DOKS.
 
 ![Heir control plane](/img/control-plane.svg)
 
@@ -41,32 +40,40 @@ This also means availability is no longer a per-cluster concern. When a new tena
 ### Process Model
 
 All control plane components run as separate processes inside a single container, managed by [S6 Overlay](https://github.com/just-containers/s6-overlay). The container
-environment is configured so that no process writes local state (beyond logs), meaning the principle is that faults are always a consequence of not satisfying external dependencies,
-it also means the container can be stopped and restarted at any time without consequence.
+environment is configured so that no process writes local state (beyond logs), meaning, the principle is that faults are always a consequence of not satisfying external
+dependencies, it also means the container can be stopped and restarted at any time without disruption.
+
 
 > One of the oft-repeated Docker mantras is "one process per container", but we disagree. There's nothing inherently bad about running multiple processes in a container.
 The more abstract "one thing per container" is our policy - a container should do one thing, such as "run a chat service" or "run gitlab." This may involve
 multiple processes, which is fine.
 
-### MasterAgent
+### Master Agent
 
-The MasterAgent is a process that runs inside every Heir control plane pod. It starts and owns the kine storage process, which provides the API server with an etcd-compatible interface backed by an external database. Alongside kine, it aggregates the health of all Kubernetes control plane components and exposes a readiness endpoint used for health checks by the Management runtime.
+The MasterAgent is a process that runs inside every Heir control plane pod. It starts and owns the [kine storage](https://github.com/k3s-io/kine) process, which provides the API server
+with an etcd-compatible interface backed by an external database. Alongside kine, it aggregates the health of all Kubernetes control plane components and
+exposes a readiness endpoint used for health checks by the Management runtime.
 
-The MasterAgent also solves an address resolution problem inherent to running the API server as a pod. When the API server starts inside a management cluster pod, the `kubernetes` Service in the default namespace is set to the cluster-internal address of that pod, which is unreachable by worker nodes that live outside the management cluster. To bridge this gap, the MasterAgent continuously reads control plane addresses from the `worker-profile ConfigMap`, resolves any hostnames to IPs, and updates the EndpointSlice backing the `kubernetes` Service in the default namespace. This keeps in-cluster DNS resolution of `kubernetes.default.svc` accurate as the control plane's network topology changes, without requiring manual intervention or pod restarts.
+The MasterAgent also solves an address resolution problem inherent to running the API server as a pod. When the API server starts inside a management cluster
+pod, the `kubernetes` Service in the default namespace is set to the cluster-internal address, which is unreachable by worker nodes that live
+in a different network. To bridge this gap, the MasterAgent continuously reads control plane addresses from `upstreamCluster.controlPlaneEndpoint`, resolves
+any hostnames to IPs, and updates the EndpointSlice backing the `kubernetes` Service in the default namespace. This keeps in-cluster DNS resolution of
+`kubernetes.default.svc` accurate as the control plane's network topology changes, without requiring manual intervention or pod restarts.
 
 ### Operators and Addons
 
-In traditional Kubernetes, operators and addon control planes (such as Istiod, ingress controllers, or custom controllers) run inside the cluster they manage. This couples
-their availability and resource consumption to the data plane, and means each cluster needs its own copy of every addon, even when those addons are functionally
-identical across clusters and support multi-tier.
+In standard Kubernetes, management tools and operators (like Istiod or ingress controllers) run inside the very clusters they manage. This means
+every single cluster needs its own separate copy of these tools, wasting resources and tying their uptime directly to your application environment.
 
-Heir inverts this: **operators and addons run in the management cluster**, communicating with tenant clusters through their API servers. An ingress controller or service mesh control plane deployed in the management cluster can manage resources across multiple data planes simultaneously, with no footprint on the worker nodes themselves.
+Heir flips this model. With Heir, these management tools run centrally in a shared management cluster. They control the tenant clusters remotely
+through API servers. For example, a single service mesh deployed in the central cluster can manage traffic across multiple environments simultaneously,
+leaving zero footprint on the actual worker nodes.
 
 This separation has meaningful consequences:
 
 - Worker nodes are reserved exclusively for application workloads
 - A single operator instance can govern multiple data planes simultaneously (if supported), reducing duplication
-- Addon vulnerabilities and bugs are contained within the management cluster and do not affect running workloads
+- Operators vulnerabilities are patched once on the management cluster
 - Addons can be upgraded centrally without touching worker nodes
 
 
@@ -81,7 +88,6 @@ Worker nodes connect to the tenant cluster through a local reverse proxy running
 
 Initially, the proxy is seeded with the addresses embedded in the `bootstrap kubeconfig` provided at provisioning time. Once the node has completed bootstrap and can authenticate to the cluster, it reads the `worker-profile ConfigMap` from the `kube-system` namespace. This ConfigMap is continuously updated by the Heir controller and contains the definitive list of control plane addresses; the proxy's endpoint pool is refreshed from this source, allowing nodes to track control plane topology changes without reconfiguration.
 
-The MasterAgent running inside the control plane pod mirrors this by keeping the Kubernetes EndpointSlice in the default namespace in sync with the same addresses, ensuring that in-cluster DNS resolution of `kubernetes.default.svc` remains accurate as infrastructure changes.
 
 ### Worker Profile
 
@@ -90,7 +96,7 @@ The `worker-profile ConfigMap` in `kube-system` is the single source of configur
 - Control plane endpoint addresses
 - A `KubeletConfiguration` document
 - Additional kubelet flags
-- CNI provider details
+- CNI provider details and more
 
 The worker process caches the profile locally after reading it, so kubelet can be restarted cleanly even if the API server is temporarily unreachable.
 The `heir worker` process continuously watches this ConfigMap for changes, it is this reconciliation loop that enables automatic cluster

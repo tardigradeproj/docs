@@ -80,12 +80,12 @@ spec:
 EOF
 ```
 
-Then deploy the control plane into the management cluster. The `--cluster-kubeconfig` flag specifies where Heir will write the kubeconfig for the new cluster:
+Then deploy the control plane into the management cluster. The `--upstream-kubeconfig` flag specifies where Heir will write the kubeconfig for the new cluster:
 
 ```bash
 heir provision controlplane \
   --kubeconfig ./management-cluster.yaml \
-  --cluster-kubeconfig ./heir-kubeconfig.yaml \
+  --upstream-kubeconfig ./heir-kubeconfig.yaml \
   --config ./heir.yaml
 ```
 
@@ -110,7 +110,6 @@ curl -sSL https://raw.githubusercontent.com/tardigradeproj/heir/refs/heads/main/
 ```bash
 heir token generate \
   --kubeconfig ./heir-kubeconfig.yaml \
-  --name heir-quickstart@kubernetes \
   --expiry 3h
 ```
 

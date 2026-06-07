@@ -80,14 +80,28 @@ spec:
 EOF
 ```
 
-Then deploy the control plane into the management cluster. The `--cluster-kubeconfig` flag specifies where Heir will write the kubeconfig for the new cluster:
+Then deploy the control plane into the management cluster. The `--upstream-kubeconfig` flag specifies where Heir will write the kubeconfig for the new cluster:
 
 ```bash
 heir provision controlplane \
   --kubeconfig ./management-cluster.yaml \
-  --cluster-kubeconfig ./heir-kubeconfig.yaml \
+  --upstream-kubeconfig ./heir-kubeconfig.yaml \
   --config ./heir.yaml
 ```
+
+:::tip[Single-machine setup]
+If you are running this experiment on a single machine, add the `--use-localhost-context` flag:
+
+```bash
+heir provision controlplane \
+  --kubeconfig ./management-cluster.yaml \
+  --upstream-kubeconfig ./heir-kubeconfig.yaml \
+  --config ./heir.yaml \
+  --use-localhost-context
+```
+
+When set, the active context in the upstream kubeconfig will point to `https://127.0.0.1:<spec.upstreamCluster.controlPlaneEndpoint.apiServer.port>` instead of the external address, so `kubectl` works correctly when run directly on the cluster host.
+:::
 
 Once the command completes, verify the cluster is up:
 
@@ -98,6 +112,10 @@ kubectl --kubeconfig=./heir-kubeconfig.yaml get nodes
 ### 4. Join a Worker Node
 
 The following steps run on the machine you want to use as a worker node.
+
+:::note[Single-machine setup]
+If you are running everything on a single machine, you already installed Heir in step 1, skip the installation step below and proceed directly to generating a join token.
+:::
 
 **Install Heir on the worker node:**
 
@@ -110,7 +128,6 @@ curl -sSL https://raw.githubusercontent.com/tardigradeproj/heir/refs/heads/main/
 ```bash
 heir token generate \
   --kubeconfig ./heir-kubeconfig.yaml \
-  --name heir-quickstart@kubernetes \
   --expiry 3h
 ```
 

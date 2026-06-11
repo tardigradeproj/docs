@@ -4,17 +4,23 @@ sidebar_position: 1
 
 # Quickstart Guide
 
+**Estimated time: ~10 minutes**
+
 Get a working Heir cluster running in minutes using [Kind](https://kind.sigs.k8s.io/) as the management cluster.
 
 ### Overview
 
 This guide covers the full setup: creating a management cluster, deploying the Heir control plane into it, and joining a worker node. By the end you will have a functioning Heir cluster you can start scheduling workloads on.
 
+To keep things simple, this guide uses mostly default options, a single control plane replica, NodePort exposure, and kine as the
+storage backend. Once you have a working cluster, visit [Configuration Options](./configuration-options) to see everything you can
+customize. If you are planning a production deployment, check the [Requirements](./requirements) page first.
+
 Kind is used here for convenience, but any conformant Kubernetes distribution works as the management cluster.
 
 ### Prerequisites
 
-- [Kind](https://kind.sigs.k8s.io/) installed
+- [Kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) installed
 - `kubectl` installed and available in your PATH
 
 ### 1. Install the Heir CLI
@@ -123,18 +129,16 @@ If you are running everything on a single machine, you already installed Heir in
 curl -sSL https://raw.githubusercontent.com/tardigradeproj/heir/refs/heads/main/install.sh | HEIR_VERSION=latest sh
 ```
 
-**Generate a join token** from your local machine (where `heir-kubeconfig.yaml` lives):
+**Generate a join token** from your local machine (where `heir-kubeconfig.yaml` lives) and join the worker node in one step:
 
 ```bash
-heir token generate \
+JOIN_TOKEN=$(heir token generate \
   --kubeconfig ./heir-kubeconfig.yaml \
-  --expiry 3h
-```
+  --expiry 3h)
 
-**Join the worker node** using the token printed by the previous command:
+echo "$JOIN_TOKEN"
 
-```bash
-sudo heir provision worker --token="<JOIN-TOKEN>"
+sudo heir provision worker --token="$JOIN_TOKEN"
 ```
 
 ### 5. Verify
@@ -149,5 +153,6 @@ You should see your worker node listed with status `Ready`.
 
 ## Next Steps
 
-- Review [Requirements](./requirements) for production deployments
-- Explore [Configuration Options](./configuration-options) to customize your setup
+[Requirements](./requirements) — Read this before moving to production. It covers hardware, networking, and OS prerequisites that are not enforced in the quickstart.
+
+[Configuration Options](./configuration-options) — Once your cluster is running, use this reference to tune the control plane, switch storage backends, configure networking, or add extra resources at bootstrap time.

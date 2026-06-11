@@ -1,0 +1,211 @@
+---
+sidebar_position: 3
+---
+
+# High Availability
+
+This guide describes the recommended setup for running Heir in production. It builds on the concepts from
+the [Quickstart](./installation/quickstart) and covers the decisions that matter most when reliability, security, and scale are a concern.
+
+![Production setup](/img/production-setup.svg)
+
+## Management Cluster
+
+The management cluster hosts all Heir control planes. Because every tenant cluster's availability inherits
+directly from it, choosing and configuring it well is the single most impactful production decision you will make.
+
+Run a highly available management cluster - Because every tenant cluster's availability inherits from it,
+the management cluster itself must be resilient to node and zone failures. Heir requires any conformant
+Kubernetes 1.31+ cluster, how you achieve that availability is up to you. Managed services like EKS, GKE, AKS,
+and DOKS handle multi-zone control planes, etcd, and upgrades for you, which reduces operational burden significantly.
+If you operate your own cluster, make sure the control plane spans multiple availability zones and that etcd has an odd
+number of members with a tested backup and restore procedure.
+
+
+## Control Plane Configuration
+
+### Replicas
+
+Run at least two replicas of the control plane pod so that a single pod failure does not cause downtime.
+The Heir control plane is stateless, all state lives in the storage backend, so any replica can serve traffic
+at any time.
+
+```yaml
+spec:
+  controlPlane:
+    deployment:
+      replicas: 2
+```
+
+### Service Exposure
+
+The Heir control plane terminates TLS itself, the API server and Konnectivity proxy handle their own certificates.
+This means whatever sits in front of them must forward raw TCP traffic without terminating TLS.
+Use a network (L4) load balancer, not an HTTP/L7 load balancer.
+
+How you expose the Service is flexible. The three common approaches are:
+
+**Kubernetes Gateway API (recommended for managed clusters)**
+
+Set the Service to `ClusterIP` and define a `TCPRoute` (or equivalent) in front of it. TLS passthrough must be enabled on the route so the load balancer forwards bytes without inspecting or terminating the TLS connection:
+
+```yaml
+# Gateway must use a TLS passthrough listener
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: heir-quickstart
+  namespace: default
+spec:
+  parentRefs:
+    - name: your-gateway
+  rules:
+    - backendRefs:
+        - name: heir-quickstart
+          port: 6443
+```
+
+Consult your Gateway implementation's documentation for the exact passthrough configuration, the mechanism differs
+between implementations (e.g. Cilium, Istio, Envoy Gateway).
+
+**Ingress**
+
+Most Ingress controllers operate at L7 and will terminate TLS, which breaks the Heir control plane. Only use an Ingress controller that explicitly supports TCP passthrough mode.
+
+**NodePort**
+
+Suitable for environments where a cloud load balancer is not available. Expose the Service with `serviceType: NodePort` and point worker nodes at the management cluster's node addresses directly. This is what the quickstart uses.
+
+:::info
+Heir will soon support configuring Ingress and Gateway API exposure directly in the `Runtime` spec, removing the need to manage these resources separately.
+:::
+
+
+
+Set whichever address or hostname workers will use as the control plane endpoint, and include it in the API server's
+SANs so the TLS certificate is valid for that address:
+
+```yaml
+spec:
+  upstreamCluster:
+    controlPlaneEndpoint:
+      addresses:
+        - "your-lb-address.example.com"
+      apiServer:
+        port: 6443
+      konnectivity:
+        port: 8132
+    apiServer:
+      sans:
+        - "your-lb-address.example.com"
+```
+
+### Public Internet Exposure
+
+Exposing the Kubernetes API server on the public internet is a significant security risk. The API server is
+a high-value target, even with valid credentials required, it increases the attack surface for credential theft,
+brute-force, and vulnerability exploitation.
+
+If public exposure is unavoidable, restrict access at the earliest possible point, on the load balancer's security
+group or firewall rules, or on the nodes themselves if using NodePort. Only allow inbound traffic from the IP ranges
+of your worker nodes. All other traffic should be dropped before it reaches the control plane.
+
+When possible, prefer keeping the control plane on a private network.
+
+
+
+## Storage Backend
+
+Storage is the most critical component of a production Heir deployment. The Heir control plane is stateless,
+every piece of cluster state lives in the database. If the database is unavailable, the control plane is unavailable.
+If data is lost, the cluster cannot be recovered. Treat it accordingly.
+
+The quickstart uses kine with its default SQLite file, which is not suitable for production, SQLite does
+not support concurrent writes from multiple replicas and offers no redundancy.
+
+For production, point kine at a highly available  database. Any database setup that provides high availability,
+automated backups, and encryption at rest and in transit will work.
+
+Store the connection string in a Kubernetes Secret and reference it from the Runtime spec:
+
+```bash
+kubectl create secret generic heir-db \
+  --namespace default \
+  --from-literal=connection-url="postgres://user:password@your-db-host:5432/heir?sslmode=require"
+```
+
+```yaml
+spec:
+  upstreamCluster:
+    storage:
+      type: kine
+      kine:
+        dataSourceRef:
+          name: heir-db
+          key: connection-url
+```
+
+### Sharing a Database Server Across Clusters
+
+Each cluster must use its own database, but can share database server (instance). For teams running many
+small or low-traffic clusters, sharing a single highly available PostgreSQL instance across multiple clusters is
+a practical way to reduce cost without sacrificing reliability.
+
+As clusters grow in size or write frequency, monitor database CPU and I/O and move high-traffic clusters to
+dedicated instances when contention appears.
+
+## Worker Nodes
+
+### Operating System
+
+Heir has been tested on Ubuntu 22/24 LTS (in progress) and Amazon Linux 2023 running on x86_64. Stick to these for
+production unless you have tested your target OS explicitly.
+
+### Bootstrap Tokens
+
+Bootstrap tokens are short-lived by design. Set a short expiry and generate a new token for each batch of nodes you join,
+ do not reuse tokens across provisioning runs.
+
+```bash
+heir token generate \
+  --kubeconfig ./heir-kubeconfig.yaml \
+  --expiry 30m
+```
+
+Tokens are automatically invalidated after TLS bootstrap completes and are no longer used for authentication once a node has its signed client certificate.
+
+### Network Requirements
+
+Heir's network model requires only outbound connectivity from worker nodes to the control plane, no inbound rules
+are needed on worker machines. Ensure your firewall allows:
+
+| Protocol | Port | Direction | Purpose |
+|----------|------|-----------|---------|
+| TCP | API server port | Worker → Control plane | Kubernetes API |
+| TCP | Konnectivity port | Worker → Control plane | Tunneled control plane traffic |
+| UDP | 8472 | Worker ↔ Worker | Flannel VXLAN pod networking |
+
+
+
+## Multi-Tenancy
+
+Each tenant cluster is a single `Runtime` resource and a single control plane pod in the management cluster.
+There is no additional infrastructure cost per cluster beyond the pod itself and the database storage it uses.
+
+Platform Admins are encouraged to take full advantage of this model. Rather than sharing a single cluster across
+teams or environments and relying on namespaces and network policies to enforce isolation, provision a dedicated
+cluster per team, environment, or domain. Namespaces and network policies introduce operational overhead, are easy
+to misconfigure, and provide weaker guarantees than true cluster boundaries. With Heir, a dedicated cluster costs
+almost nothing extra, so there is no reason to trade isolation for convenience.
+
+To provision multiple tenant clusters, deploy multiple `Runtime` resources with distinct names, each pointing
+to its own database and exposing its own ports. Operators and service meshes deployed centrally in the management
+cluster can manage all tenant clusters simultaneously, with zero footprint on worker nodes.
+
+
+
+## You can also read
+
+[Requirements](./installation/requirements) — Full hardware, OS, and network requirements for both management cluster and worker nodes.
+
+[Configuration Options](./installation/configuration-options) — Complete reference for every field in the `Runtime` spec, including advanced kubelet configuration and extra resource bootstrapping.

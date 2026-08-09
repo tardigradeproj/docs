@@ -8,13 +8,18 @@ sidebar_position: 1
 
 Get a working Heir cluster running in minutes using [Kind](https://kind.sigs.k8s.io/) as the management cluster.
 
+:::note
+This guide assumes Kind and the worker node run on the same machine.
+:::
+
 ### Overview
 
-This guide covers the full setup: creating a management cluster, deploying the Heir control plane into it, and joining a worker node. By the end you will have a functioning Heir cluster you can start scheduling workloads on.
+This guide covers the full setup: creating a management cluster, installing the Heir Operator, deploying the Heir control plane, and joining a worker node. By the end you will have a functioning Heir cluster you can start scheduling workloads on.
 
 To keep things simple, this guide uses mostly default options, a single control plane replica, NodePort exposure, and kine as the
 storage backend. Once you have a working cluster, visit [Configuration Options](../configuration-options/runtime) to see everything you can
-customize. If you are planning a production deployment, check the [Requirements](./requirements) page first.
+customize, including the [Helm chart values](../configuration-options/chart) used to install the Operator. If you are planning a production deployment,
+check the [Requirements](./requirements) page first.
 
 Kind is used here for convenience, but any conformant Kubernetes distribution works as the management cluster.
 
@@ -24,23 +29,9 @@ Kind is used here for convenience, but any conformant Kubernetes distribution wo
 - `kubectl` installed and available in your PATH
 - [Helm](https://helm.sh/docs) installed
 
-### 1. Install the Heir CLI
+### 1. Create the Management Cluster
 
-Install Heir on your local machine:
-
-```bash
-curl -sSL https://raw.githubusercontent.com/tardigradeproj/heir/refs/heads/main/install.sh | HEIR_VERSION=latest sh
-```
-
-Verify the installation:
-
-```bash
-heir version
-```
-
-### 2. Create the Management Cluster
-
-Create a Kind cluster with two NodePort mappings — one for the Kubernetes API server and one for Konnectivity, which handles communication between the control plane and worker nodes:
+Create a Kind cluster with two NodePort mappings, one for the Kubernetes API server and one for the plane tunnel, which handles communication between the control plane and worker nodes:
 
 ```bash
 cat <<EOF | kind create cluster --name heir-quickstart --kubeconfig="./management-cluster.yaml" --config=-
@@ -56,12 +47,33 @@ nodes:
 EOF
 ```
 
+### 2. Install the Heir Operator
+
+The Heir Operator is the controller-manager that watches `Runtime` and `WorkerJoinToken` resources and reconciles them into running tenant clusters. Install it into the management cluster with Helm:
+
+```bash
+helm install heir oci://ghcr.io/tardigradeproj/charts/heir --version 1.35.7-heirv0.1.0 \
+  --kubeconfig ./management-cluster.yaml \
+  -n heir-system --create-namespace \
+  --set manager.image.repository=ghcr.io/tardigradeproj/heir-controller-manager \
+  --set manager.image.tag=1.35.7-heirv0.1.0
+```
+
+Verify the operator is running before continuing:
+
+```bash
+kubectl --kubeconfig ./management-cluster.yaml get pods -n heir-system
+```
+
+See [Helm Chart](../configuration-options/chart) for the full set of values the chart accepts.
+
 ### 3. Deploy the Control Plane
 
-First, create the Heir configuration file. This tells Heir how to deploy the control plane and which ports to expose. See [Configuration Options](../configuration-options/runtime) for a full reference.
+First, create the `Runtime` resource. This tells the Operator how to deploy the control plane and which ports to expose. See [Configuration Options](../configuration-options/runtime) for a full reference.
 
 ```bash
 cat <<\EOF > ./heir.yaml
+apiVersion: controlplane.tardigrade.runtime.io/v1alpha1
 kind: Runtime
 metadata:
   name: heir-quickstart
@@ -74,70 +86,102 @@ spec:
       replicas: 1
     service:
       serviceType: NodePort
-  upstreamCluster:
-    controlPlaneEndpoint:
-      addresses:
-        - "127.0.0.1" #assuming that the worker node is being configured on the machine where the kind is running
+  cluster:
+    controlPlaneExternalEndpoint:
       apiServer:
+        host: "127.0.0.1" #assuming that the worker node is being configured on the machine where the kind is running
         port: 30080
-      konnectivity:
+      planeTunnel:
+        host: "127.0.0.1"
         port: 30081
     storage:
       type: kine
 EOF
 ```
 
-Then deploy the control plane into the management cluster. The `--upstream-kubeconfig` flag specifies where Heir will write the kubeconfig for the new cluster:
+Apply it against the management cluster:
 
 ```bash
-heir provision controlplane \
-  --kubeconfig ./management-cluster.yaml \
-  --upstream-kubeconfig ./heir-kubeconfig.yaml \
-  --config ./heir.yaml
+kubectl --kubeconfig ./management-cluster.yaml apply -f ./heir.yaml
 ```
 
-:::tip[Single-machine setup]
-If you are running this experiment on a single machine, add the `--use-localhost-context` flag:
+Wait for the control plane pod to come up:
 
 ```bash
-heir provision controlplane \
-  --kubeconfig ./management-cluster.yaml \
-  --upstream-kubeconfig ./heir-kubeconfig.yaml \
-  --config ./heir.yaml \
-  --use-localhost-context
+kubectl --kubeconfig ./management-cluster.yaml get pods -w
 ```
 
-When set, the active context in the upstream kubeconfig will point to `https://127.0.0.1:<spec.upstreamCluster.controlPlaneEndpoint.apiServer.port>` instead of the external address, so `kubectl` works correctly when run directly on the cluster host.
+The Runtime controller also publishes its own admin kubeconfig as a `<name>-kubeconfig` Secret. Fetching, decoding, and saving it lets you query the tenant cluster directly:
+
+```bash
+kubectl --kubeconfig ./management-cluster.yaml get secret heir-quickstart-kubeconfig -o jsonpath='{.data.kubeconfig}' | base64 -d > ./heir-quickstart-kubeconfig.yaml
+```
+
+:::tip[Running the worker on a different machine]
+The server address baked into that kubeconfig is whatever you set as `cluster.controlPlaneExternalEndpoint.apiServer.host` in `heir.yaml`, `127.0.0.1` above.
+That works as-is if you run every command on this page from the same machine that's running Kind, since Kind also maps the same NodePort (`30080`) onto your host.
+If the worker node or your `kubectl` client lives on a different machine, use a host address that machine can actually reach instead, and override the
+generated kubeconfig accordingly:
+
+```bash
+kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml config set-cluster heir-quickstart --server=https://<reachable-address>:30080
+```
 :::
 
 Once the command completes, verify the cluster is up:
 
 ```bash
-kubectl --kubeconfig=./heir-kubeconfig.yaml get nodes
+kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml get nodes
 ```
 
 ### 4. Join a Worker Node
 
 The following steps run on the machine you want to use as a worker node.
 
-:::note[Single-machine setup]
-If you are running everything on a single machine, you already installed Heir in step 1, skip the installation step below and proceed directly to generating a join token.
-:::
 
-**Install Heir on the worker node:**
+Installing Heir on the worker node is required before joining.
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/tardigradeproj/heir/refs/heads/main/install.sh | HEIR_VERSION=latest sh
 ```
 
-**Generate a join token** from your local machine (where `heir-kubeconfig.yaml` lives) and join the worker node in one step:
+Create a join token from your local machine (where `management-cluster.yaml` lives) by applying a `WorkerJoinToken` resource. See [WorkerJoinToken](../configuration-options/worker-join-token) for the full reference:
 
 ```bash
-JOIN_TOKEN=$(heir token generate \
-  --kubeconfig ./heir-kubeconfig.yaml \
-  --expiry 3h)
+cat <<EOF | kubectl --kubeconfig ./management-cluster.yaml apply -f -
+apiVersion: controlplane.tardigrade.runtime.io/v1alpha1
+kind: WorkerJoinToken
+metadata:
+  name: new-node
+  namespace: default
+spec:
+  runtimeRef:
+    name: heir-quickstart
+  ttl: 3h
+EOF
+```
 
-echo "$JOIN_TOKEN"
+Wait until it's ready:
+
+```bash
+kubectl --kubeconfig ./management-cluster.yaml wait workerjointoken/new-node --for=condition=Ready --timeout=60s
+```
+
+You can check on it at any point with `kubectl get workerjointoken`, which reports the owning `Runtime`, readiness, and expiry:
+
+```bash
+kubectl --kubeconfig ./management-cluster.yaml get workerjointoken
+```
+
+```text
+NAME       RUNTIME           READY   REASON        EXPIRES                AGE
+new-node   heir-quickstart   True    TokenIssued   2026-08-09T23:25:34Z   9s
+```
+
+The controller publishes the minted token as the `jointoken` key of a `<name>-jointoken` Secret in the management cluster. Fetch it and join the worker node in one step:
+
+```bash
+JOIN_TOKEN=$(kubectl --kubeconfig ./management-cluster.yaml get secret new-node-jointoken -o jsonpath='{.data.jointoken}')
 
 sudo heir provision worker --token="$JOIN_TOKEN"
 ```
@@ -147,7 +191,7 @@ sudo heir provision worker --token="$JOIN_TOKEN"
 From your local machine, confirm the worker node has joined and is ready:
 
 ```bash
-kubectl --kubeconfig ./heir-kubeconfig.yaml get nodes
+kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml get nodes
 ```
 
 You should see your worker node listed with status `Ready`.
@@ -157,3 +201,5 @@ You should see your worker node listed with status `Ready`.
 [Requirements](./requirements) — Read this before moving to production. It covers hardware, networking, and OS prerequisites that are not enforced in the quickstart.
 
 [Configuration Options](../configuration-options/runtime) — Once your cluster is running, use this reference to tune the control plane, switch storage backends, configure networking, or add extra resources at bootstrap time.
+
+[Helm Chart](../configuration-options/chart) — Reference for every value the Operator's Helm chart accepts.

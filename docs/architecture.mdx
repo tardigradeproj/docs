@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 4
 ---
 
 # Architecture
@@ -56,7 +56,7 @@ exposes a readiness endpoint used for health checks by the Management runtime.
 
 The MasterAgent also solves an address resolution problem inherent to running the API server as a pod. When the API server starts inside a management cluster
 pod, the `kubernetes` Service in the default namespace is set to the cluster-internal address, which is unreachable by worker nodes that live
-in a different network. To bridge this gap, the MasterAgent continuously reads control plane addresses from `upstreamCluster.controlPlaneEndpoint`, resolves
+in a different network. To bridge this gap, the MasterAgent continuously reads control plane addresses from `cluster.controlPlaneExternalEndpoint`, resolves
 any hostnames to IPs, and updates the EndpointSlice backing the `kubernetes` Service in the default namespace. This keeps in-cluster DNS resolution of
 `kubernetes.default.svc` accurate as the control plane's network topology changes, without requiring manual intervention or pod restarts.
 

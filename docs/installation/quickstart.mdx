@@ -13,7 +13,7 @@ Get a working Heir cluster running in minutes using [Kind](https://kind.sigs.k8s
 This guide covers the full setup: creating a management cluster, deploying the Heir control plane into it, and joining a worker node. By the end you will have a functioning Heir cluster you can start scheduling workloads on.
 
 To keep things simple, this guide uses mostly default options, a single control plane replica, NodePort exposure, and kine as the
-storage backend. Once you have a working cluster, visit [Configuration Options](./configuration-options) to see everything you can
+storage backend. Once you have a working cluster, visit [Configuration Options](../configuration-options/runtime) to see everything you can
 customize. If you are planning a production deployment, check the [Requirements](./requirements) page first.
 
 Kind is used here for convenience, but any conformant Kubernetes distribution works as the management cluster.
@@ -22,6 +22,7 @@ Kind is used here for convenience, but any conformant Kubernetes distribution wo
 
 - [Kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) installed
 - `kubectl` installed and available in your PATH
+- [Helm](https://helm.sh/docs) installed
 
 ### 1. Install the Heir CLI
 
@@ -57,7 +58,7 @@ EOF
 
 ### 3. Deploy the Control Plane
 
-First, create the Heir configuration file. This tells Heir how to deploy the control plane and which ports to expose. See [Configuration Options](./configuration-options) for a full reference.
+First, create the Heir configuration file. This tells Heir how to deploy the control plane and which ports to expose. See [Configuration Options](../configuration-options/runtime) for a full reference.
 
 ```bash
 cat <<\EOF > ./heir.yaml
@@ -155,4 +156,4 @@ You should see your worker node listed with status `Ready`.
 
 [Requirements](./requirements) — Read this before moving to production. It covers hardware, networking, and OS prerequisites that are not enforced in the quickstart.
 
-[Configuration Options](./configuration-options) — Once your cluster is running, use this reference to tune the control plane, switch storage backends, configure networking, or add extra resources at bootstrap time.
+[Configuration Options](../configuration-options/runtime) — Once your cluster is running, use this reference to tune the control plane, switch storage backends, configure networking, or add extra resources at bootstrap time.

@@ -1,0 +1,46 @@
+---
+sidebar_position: 3
+---
+
+# WorkerJoinToken
+
+## Overview
+
+`WorkerJoinToken` is a one-shot custom resource that generates the bootstrap token that worker nodes use to join the cluster.
+`WorkerJoinToken` writes a startup kubeconfig to a Secret and reports its expiration date in `status`.
+
+```yaml
+kind: WorkerJoinToken
+metadata:
+  name: worker-az1
+  namespace: default
+spec:
+  runtimeRef:
+    name: my-cluster
+  ttl: 3h
+```
+
+Both `spec` fields are immutable after creation. `WorkerJoinToken` is intentionally one-shot rather than auto-renewing, to generate a token pointed
+at a different Cluster, or with a different TTL, delete this object and create a new one.
+
+
+
+## spec
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| runtimeRef.name | string | Name of the `Runtime` (cluster) this token grants access to join. Must exist in the same namespace as the `WorkerJoinToken`.| — |
+| ttl | duration | How long the generated token remains valid on the cluster, starting from the moment it is issued. Immutable | `3h` |
+
+
+## Using the Token
+
+Once `status.conditions[Ready]` is `True`, read the kubeconfig from the Secret named in `status.secretRef.name` and pass it to `heir provision worker`.
+
+```bash
+JOIN_TOKEN=$(kubectl get secret worker-az1-jointoken -o jsonpath='{.data.jointoken}')
+sudo heir provision worker --token="$JOIN_TOKEN"
+```
+
+Because the token is short-lived and one-shot by design, create a new `WorkerJoinToken` for each batch of nodes you provision rather than
+reusing one across separate provisioning runs.

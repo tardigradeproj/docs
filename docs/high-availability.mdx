@@ -167,9 +167,17 @@ Bootstrap tokens are short-lived by design. Set a short expiry and generate a ne
  do not reuse tokens across provisioning runs.
 
 ```bash
-heir token generate \
-  --kubeconfig ./heir-kubeconfig.yaml \
-  --expiry 30m
+cat <<EOF | kubectl --kubeconfig ./management-cluster.yaml apply -f -
+apiVersion: controlplane.tardigrade.runtime.io/v1alpha1
+kind: WorkerJoinToken
+metadata:
+  name: new-node
+  namespace: default
+spec:
+  runtimeRef:
+    name: heir-quickstart
+  ttl: 3h
+EOF
 ```
 
 Tokens are automatically invalidated after TLS bootstrap completes and are no longer used for authentication once a node has its signed client certificate.

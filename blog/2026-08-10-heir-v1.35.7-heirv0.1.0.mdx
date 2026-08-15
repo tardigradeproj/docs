@@ -28,7 +28,7 @@ release, the recommended path is to install the Operator chart and let it reconc
 helm install heir oci://ghcr.io/tardigradeproj/charts/heir --version 1.35.7-heirv0.1.0 \
   -n heir-system --create-namespace \
   --set manager.image.repository=ghcr.io/tardigradeproj/heir-controller-manager \
-  --set manager.image.tag=1.35.7-heirv0.1.0
+  --set manager.image.tag=v1.35.7-heirv0.1.0
 ```
 
 The chart covers the controller Deployment, RBAC helper roles, CRD install/keep behavior, the metrics endpoint, and optional cert-manager and Prometheus

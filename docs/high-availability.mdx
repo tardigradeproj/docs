@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 5
 ---
 
 # High Availability
@@ -39,7 +39,7 @@ spec:
 
 ### Service Exposure
 
-The Heir control plane terminates TLS itself, the API server and Konnectivity proxy handle their own certificates.
+The Heir control plane terminates TLS itself, the API server and plane tunnel handle their own certificates.
 This means whatever sits in front of them must forward raw TCP traffic without terminating TLS.
 Use a network (L4) load balancer, not an HTTP/L7 load balancer.
 
@@ -87,13 +87,13 @@ SANs so the TLS certificate is valid for that address:
 
 ```yaml
 spec:
-  upstreamCluster:
-    controlPlaneEndpoint:
-      addresses:
-        - "your-lb-address.example.com"
+  cluster:
+    controlPlaneExternalEndpoint:
       apiServer:
+        host: "your-lb-address.example.com"
         port: 6443
-      konnectivity:
+      planeTunnel:
+        host: "your-lb-address.example.com"
         port: 8132
     apiServer:
       sans:
@@ -136,7 +136,7 @@ kubectl create secret generic heir-db \
 
 ```yaml
 spec:
-  upstreamCluster:
+  cluster:
     storage:
       type: kine
       kine:
@@ -167,9 +167,17 @@ Bootstrap tokens are short-lived by design. Set a short expiry and generate a ne
  do not reuse tokens across provisioning runs.
 
 ```bash
-heir token generate \
-  --kubeconfig ./heir-kubeconfig.yaml \
-  --expiry 30m
+cat <<EOF | kubectl --kubeconfig ./management-cluster.yaml apply -f -
+apiVersion: controlplane.tardigrade.runtime.io/v1alpha1
+kind: WorkerJoinToken
+metadata:
+  name: new-node
+  namespace: default
+spec:
+  runtimeRef:
+    name: heir-quickstart
+  ttl: 3h
+EOF
 ```
 
 Tokens are automatically invalidated after TLS bootstrap completes and are no longer used for authentication once a node has its signed client certificate.
@@ -182,7 +190,7 @@ are needed on worker machines. Ensure your firewall allows:
 | Protocol | Port | Direction | Purpose |
 |----------|------|-----------|---------|
 | TCP | API server port | Worker → Control plane | Kubernetes API |
-| TCP | Konnectivity port | Worker → Control plane | Tunneled control plane traffic |
+| TCP | Plane tunnel port | Worker → Control plane | Tunneled control plane traffic |
 | UDP | 8472 | Worker ↔ Worker | Flannel VXLAN pod networking |
 
 
@@ -208,4 +216,4 @@ cluster can manage all tenant clusters simultaneously, with zero footprint on wo
 
 [Requirements](./installation/requirements) — Full hardware, OS, and network requirements for both management cluster and worker nodes.
 
-[Configuration Options](./installation/configuration-options) — Complete reference for every field in the `Runtime` spec, including advanced kubelet configuration and extra resource bootstrapping.
+[Configuration Options](./configuration-options/runtime) — Complete reference for every field in the `Runtime` spec, including advanced kubelet configuration and extra resource bootstrapping.

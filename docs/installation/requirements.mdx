@@ -54,7 +54,7 @@ Heir is distributed with [Flannel](https://github.com/flannel-io/flannel) as the
 
 | Protocol | Port | Source | Destination | Description |
 |----------|------|--------|-------------|-------------|
-| TCP | configured via [`upstreamCluster.controlPlaneEndpoint.apiServer.port`](./configuration-options#upstreamclustercontrolplaneendpoint) | Worker nodes | Control plane | Kubernetes API server |
-| TCP | configured via [`upstreamCluster.controlPlaneEndpoint.konnectivity.port`](./configuration-options#upstreamclustercontrolplaneendpoint) | Worker nodes | Control plane | Control plane to worker node multiplexed communication |
+| TCP | configured via [`cluster.controlPlaneExternalEndpoint.apiServer.port`](../configuration-options/runtime#clustercontrolplaneexternalendpoint) | Worker nodes | Control plane | Kubernetes API server |
+| TCP | configured via [`cluster.controlPlaneExternalEndpoint.planeTunnel.port`](../configuration-options/runtime#clustercontrolplaneexternalendpoint) | Worker nodes | Control plane | Control plane to worker node multiplexed communication (plane tunnel) |
 | UDP | 8472 | Worker nodes | Worker nodes | Flannel VXLAN overlay — pod-to-pod traffic across nodes |
 

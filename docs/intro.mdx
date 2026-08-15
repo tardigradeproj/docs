@@ -12,7 +12,7 @@ Heir is an open source Kubernetes distribution designed to make it easy to opera
 scatter control plane components across dedicated nodes, Heir collapses the entire control plane into a single stateless pod running inside a Management
 Kubernetes Cluster. That management cluster can be any conformant Kubernetes distribution, so each tenant cluster inherits the availability guarantees of
 whatever management infrastructure you already run. Operators, add-ons, and cluster controllers all live there, cleanly separated from the workloads they
-manage, and because they run centrally, a single operator instance can govern any number of data planes simultaneously, dramatically reducing the total footprint
+manage, and because they run centrally, a single operator instance can manage any number of data planes simultaneously, reducing the total footprint
 required to manage large fleets of clusters.
 
 The data plane is a self-contained binary that packages almost everything required to run a Kubernetes worker node, with the exception of the Linux kernel and

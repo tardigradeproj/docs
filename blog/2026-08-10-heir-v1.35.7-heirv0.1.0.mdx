@@ -1,0 +1,171 @@
+---
+slug: heir-v1.35.7-heirv0.1.0
+title: "Heir v1.35.7-heirv0.1.0"
+authors: [edwin]
+tags: [heir, kubernetes]
+---
+
+Heir v1.35.7-heirv0.1.0 is out. It tracks Kubernetes v1.35.7 and is the first release you can install with Helm: the control-plane
+Operator now ships as a proper chart, worker join tokens are a Kubernetes resource instead of a CLI command, and Kubernetes Konnectivity
+has been replaced end-to-end by Heir's own implementation (plane tunnel).
+
+{/* truncate */}
+
+## Install the Operator with Helm
+
+Heir is moving from a CLI-driven workflow to an Operator-driven one, and this release is the first concrete step, not just a change in how you
+happen to invoke commands. The wider vision is for every piece of cluster lifecycle, certificate renewal, control plane upgrades, worker node
+upgrades, installing addons, and more, to be driven declaratively: you describe desired state in a CRD, and a controller reconciles it, the same
+model Kubernetes already uses for everything else it manages. That's also the direction that leads toward adopting
+[Cluster API](https://cluster-api.sigs.k8s.io/) (CAPI) as the machinery behind that lifecycle management, rather than Heir maintaining its own
+bespoke imperative path alongside a growing declarative one.
+
+This release's slice of that shift: previously, standing up a Heir cluster meant running the CLI directly against a management cluster. As of this
+release, the recommended path is to install the Operator chart and let it reconcile `Runtime` and `WorkerJoinToken` resources you apply with
+`kubectl`:
+
+```bash
+helm install heir oci://ghcr.io/tardigradeproj/charts/heir --version 1.35.7-heirv0.1.0 \
+  -n heir-system --create-namespace \
+  --set manager.image.repository=ghcr.io/tardigradeproj/heir-controller-manager \
+  --set manager.image.tag=1.35.7-heirv0.1.0
+```
+
+The chart covers the controller Deployment, RBAC helper roles, CRD install/keep behavior, the metrics endpoint, and optional cert-manager and Prometheus
+ServiceMonitor integration. See the [updated Quickstart](/installation/quickstart) for the full walkthrough, and the
+[Helm Chart reference](/configuration-options/chart) for every value it accepts.
+
+## Plane Tunnel replaces Konnectivity
+
+Heir no longer depends on the Kubernetes Konnectivity proxy to reach worker nodes. Konnectivity assumes the API server is a fixed,
+singleton process: each `konnectivity-agent` holds a persistent tunnel to every `konnectivity-server` replica, so total connections grow
+as N×M, adding a replica forces every existing agent to reconnect before traffic can reach it, and `--server-count` has to be kept in
+sync with the actual replica count by hand. Heir runs the API server as a replicated, horizontally-scalable Deployment, an assumption
+Konnectivity was never built for.
+
+The plane tunnel keeps the same N×M connection shape, one multiplexed TCP tunnel per worker per replica, but removes the coordination
+problems around it:
+
+- **Every agent dials every replica**, not a routing table's worth. The agent resolves the plane tunnel's headless Service via DNS
+  (`--replica-discovery-dns`), learns the current replica count, and keeps that many tunnels open, reconnecting as replicas come and go.
+- **No wrong-replica scenario.** Because every replica already holds a tunnel to every worker, any replica can serve any request.
+- **Scaling out doesn't drop existing tunnels.** A new replica just adds a DNS record; agents pick it up on their next reconnect and
+  open one more tunnel without disturbing the others. There's no `--server-count` to keep in sync.
+
+Each worker's tunnel is authenticated with mutual TLS, using the node's `system:node:<name>` client certificate, verified against the
+cluster CA, so the plane tunnel knows exactly which worker owns a tunnel with no separate identity protocol. Routing a request
+(`kubectl exec`, log streaming, or the API server's own reach into a kubelet) works the same way it does today with Konnectivity's
+egress selector: the API server issues an HTTP `CONNECT worker2:10250` over its own mTLS leg to the plane tunnel Service, any replica
+accepts it, looks up the already-open agent tunnel for `worker2`, and dials the kubelet through it. The plane tunnel never terminates
+the *inner* TLS session between the API server and the kubelet, it just splices bytes between the two legs, so certificate verification
+on both ends behaves exactly as it would over a direct connection. Full design details, including the egress selector configuration,
+live in `docs/plane-tunnel.md` in the controller repo.
+
+### Why this exists beyond replacing Konnectivity
+
+Konnectivity only ever solved one problem: letting the API server reach a kubelet. The plane tunnel is built to solve that same class of
+problem for everything else Heir wants to run centrally, not just `kube-apiserver`. Every worker already holds one multiplexed
+connection into the management cluster; anything that needs to talk to something on that worker can register itself as another upstream
+on the same connection instead of asking for its own inbound port.
+
+That's the actual reason it changed: it's the foundation for keeping Heir's "run control plane components centrally" philosophy
+consistent.
+
+### Multiplexing with `outbound`, not HTTP/2
+
+The plane tunnel's transport is [`outbound`](https://github.com/tardigradeproj/outbound), a Go fork of HashiCorp's `yamux` that Heir
+maintains. `outbound` multiplexes streams at the transport layer, framing them directly over a raw TCP connection with a 13-byte
+header, instead of layering multiplexing inside HTTP/2's request/response semantics. That makes it cheaper than HTTP/2 for this job: no
+HTTP stack to run on either end, no request/response framing to pay for, just streams over a socket.
+
+### Closing a real allocation leak in the tunnel's copy path
+
+`outbound`'s `Tunnel` proxies data between an agent stream and the real upstream connection with a small bidirectional pipe that used to
+call `io.Copy(dst, src)`. `net.TCPConn` implements `io.ReaderFrom`/`io.WriterTo`, so `io.Copy` silently skipped its own pooled buffer and
+allocated a fresh scratch buffer per direction on every proxied connection. The old `io.Copy` path was using 2.4x more memory than the
+pooled version.
+
+The fix, [`outbound`](https://github.com/tardigradeproj/outbound) commit `4522a0b`, pools those buffers in a `sync.Pool` and hides
+`net.TCPConn`'s fast-path interfaces so `io.CopyBuffer` is forced to actually use them:
+
+```go
+var copyBufferPool = sync.Pool{
+	New: func() any { buf := make([]byte, 32*1024); return &buf },
+}
+
+func tunnelPipe(a, b net.Conn) {
+	pipe := func(dst, src net.Conn) {
+		bufp := copyBufferPool.Get().(*[]byte)
+		defer copyBufferPool.Put(bufp)
+		_, _ = io.CopyBuffer(onlyWriter{dst}, onlyReader{src}, *bufp)
+	}
+}
+```
+
+`go tool pprof -top mem.out` confirms it: `io.copyBuffer` now shows up going through the pool, and the rest of the profile is ordinary
+`Session`/`Stream`/TLS bookkeeping, not a scratch buffer reallocated on every connection.
+
+## A declarative way to join workers
+
+`heir token generate` is now backed by a `WorkerJoinToken` custom resource. Apply one scoped to a `Runtime`, and the controller mints a
+one-shot bootstrap token and kubeconfig, publishes it as an owned `<name>-jointoken` Secret, revokes it on deletion, and re-issues it if
+the Secret is ever edited or deleted out from under it:
+
+```yaml
+apiVersion: controlplane.tardigrade.runtime.io/v1alpha1
+kind: WorkerJoinToken
+metadata:
+  name: new-node
+  namespace: default
+spec:
+  runtimeRef:
+    name: heir-quickstart
+  ttl: 3h
+```
+
+```bash
+JOIN_TOKEN=$(kubectl get secret new-node-jointoken -o jsonpath='{.data.jointoken}')
+sudo heir provision worker --token="$JOIN_TOKEN"
+```
+
+## A redesigned Runtime API
+
+The `Runtime` spec picked up a round of cleanup this release, all reflected in the [Configuration Options](/configuration-options/runtime)
+reference and the Quickstart:
+
+- `upstreamCluster` is now `cluster`
+- The shared `controlPlaneEndpoint.addresses` list is gone. The API server and plane tunnel each get their own `host` under
+  `cluster.controlPlaneExternalEndpoint`, since they can now sit behind different IPs
+- `ControlPlaneEndpointSpec` is renamed `ControlPlaneExternalEndpointSpec`
+- The plane tunnel's NodePort moved out of the shared service spec into `spec.controlPlane.planeTunnel.service`
+- `RegisterSetting` is renamed `RegistrySettings` on the CoreDNS and kube-proxy specs
+- `ComponentEndpoint.Host` is now validated with a CEL rule requiring a bare hostname or IPv4 address, since it's formatted directly into
+  a cert SAN
+
+This is a breaking change to the `Runtime` spec. If you're upgrading an existing cluster, update your manifests before applying this
+version's CRDs.
+
+## Sharper certificate and status visibility
+
+`Runtime.status` reports per-certificate expiry now, one entry per PKI cert (`ca`, `apiserver`, `serviceaccount`, `planetunnel`,
+`apiserver-planetunnel`, plus the scheduler and controller-manager client certs) instead of a single `certificatesExpireAt` field, and
+carries `observedGeneration` so you can tell whether status reflects the latest spec. `WorkerJoinToken` also gained printer columns, so
+`kubectl get workerjointoken` gives you the owning `Runtime`, readiness, reason, and expiry at a glance.
+
+## Under the hood
+
+- The `heir-controller-manager` image is now built by goreleaser, the same pipeline that builds `heir` and `heir-tunnel`, instead of a
+  one-off Dockerfile
+- Dependency versions (Kubernetes, containerd, runc, crictl, CNI, Calico) are centralized in `.dependencies-version.yaml`; this release
+  bumps Kubernetes to v1.35.7 and crictl to v1.35.0 to match
+- goreleaser now supports `-rc` prerelease tags, which is how `v1.35.7-heirv0.1.0-rc1` shipped ahead of this stable cut
+- End-to-end tests build real binaries and provision an actual Runtime and worker join, run in CI via shared, de-duplicated
+  build-toolchain GitHub Actions
+- `docs/running-locally.md` was rewritten as a full local-dev walkthrough and linked from the README and contributing guide
+
+## Upgrading
+
+Because the `Runtime` API changed shape, treat this as a breaking release: re-apply CRDs, update any `Runtime` manifests using the old
+field names, and switch worker provisioning over to `WorkerJoinToken`. The [Quickstart](/installation/quickstart) and
+[Configuration Options](/configuration-options/runtime) docs are fully updated for v1.35.7-heirv0.1.0 and are the fastest way to see the
+new shape end-to-end.

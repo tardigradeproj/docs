@@ -1,0 +1,325 @@
+---
+sidebar_position: 2
+---
+
+# Runtime
+
+## Overview
+
+The `Runtime` custom resource is the primary way to configure a Heir tenant cluster. Its spec is split into two top-level sections:
+
+- `controlPlane` — controls how the tenant control plane is deployed inside the management cluster (image, replicas, service exposure, plane tunnel)
+- `cluster` — controls the Kubernetes cluster itself (networking, storage, API server configuration, worker node settings)
+
+```yaml
+kind: Runtime
+metadata:
+  name: my-cluster
+  namespace: default
+spec:
+  controlPlane: ...
+  cluster: ...
+```
+
+---
+
+## spec.controlPlane
+
+Configures the Deployment and Service created in the management cluster to host the Heir control plane, plus the plane tunnel that lets worker
+nodes reach it.
+
+### controlPlane.heir
+
+| Field | Type | Description |
+|-------|------|-------------|
+| image | string | Fully qualified container image for the Heir control plane, e.g. `ghcr.io/tardigradeproj/heir:v1.2.3` |
+
+### controlPlane.deployment
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| replicas | integer | Desired number of control plane pod replicas | `1` |
+| serviceAccountName | string | ServiceAccount mounted into the control plane pods | `default` |
+| runtimeClassName | string | References a RuntimeClass that controls which container runtime is used. Omit to use the cluster default | — |
+| tolerations | [][Toleration](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/) | Tolerations applied to the control plane pods. See [Kubernetes docs](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/) | — |
+| affinity | Affinity | Scheduling constraints for the control plane pods. See [Kubernetes docs](https://kubernetes.io/docs/tasks/configure-pod-container/assign-pods-nodes-using-node-affinity/) | — |
+| resources | [ResourceRequirements](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) | CPU and memory requests and limits for the control plane container | — |
+| additionalMetadata.labels | map[string]string | Extra labels added to the Deployment | — |
+| additionalMetadata.annotations | map[string]string | Extra annotations added to the Deployment | — |
+
+### controlPlane.service
+
+Controls how the tenant control plane's API server is exposed outside the management cluster.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| serviceType | string | How the Service is exposed. One of `NodePort`, `ClusterIP`, `LoadBalancer`, `ExternalName` | `NodePort` |
+| apiServerNodePort | integer | NodePort assigned to the API server port. Only applies when `serviceType` is `NodePort` | `30080` |
+| additionalPorts | [][AdditionalPort](#additionalports) | Extra ports added to the Service beyond the default API server port | — |
+| additionalMetadata.labels | map[string]string | Extra labels added to the Service | — |
+| additionalMetadata.annotations | map[string]string | Extra annotations added to the Service | — |
+
+#### additionalPorts
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| name | string | Port name within the Service. Must be unique across all ports | — |
+| port | integer | Port number exposed by the Service | — |
+| targetPort | integer or string | Port number or named port on the control plane pod that receives this traffic | — |
+| protocol | string | IP protocol for this port. One of `TCP`, `UDP`, `SCTP` | `TCP` |
+| appProtocol | string | Hint to implementations about the application-layer protocol on this port, e.g. `https` | — |
+
+### controlPlane.planeTunnel
+
+The plane tunnel is a TCP multiplexer that lets worker nodes reach the tenant control plane over a single outbound connection, so no inbound
+connectivity to worker nodes is ever required. It runs as its own Deployment and Service in the management cluster, separate from the control
+plane's own Deployment and Service above.
+
+#### planeTunnel.server
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| image | string | Container image for the plane tunnel server | `ghcr.io/tardigradeproj/heir-tunnel:latest` |
+| deployment.replicas | integer | Desired number of plane tunnel server pod replicas | `1` |
+| deployment.serviceAccountName | string | ServiceAccount mounted into the plane tunnel server pods | `default` |
+| deployment.runtimeClassName | string | References a RuntimeClass that controls which container runtime is used. Omit to use the cluster default | — |
+| deployment.tolerations | [][Toleration](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/) | Tolerations applied to the plane tunnel server pods | — |
+| deployment.affinity | Affinity | Scheduling constraints for the plane tunnel server pods | — |
+| deployment.resources | [ResourceRequirements](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) | CPU and memory requests and limits for the plane tunnel server container | — |
+| deployment.additionalMetadata.labels | map[string]string | Extra labels added to the Deployment | — |
+| deployment.additionalMetadata.annotations | map[string]string | Extra annotations added to the Deployment | — |
+
+#### planeTunnel.service
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| serviceType | string | How the Service is exposed. One of `NodePort`, `ClusterIP`, `LoadBalancer`, `ExternalName` | `NodePort` |
+| nodePort | integer | NodePort assigned to the plane tunnel port. Only applies when `serviceType` is `NodePort` | `30081` |
+| additionalMetadata.labels | map[string]string | Extra labels added to the Service | — |
+| additionalMetadata.annotations | map[string]string | Extra annotations added to the Service | — |
+
+---
+
+## spec.cluster
+
+Defines the configuration for the Heir Kubernetes cluster being created, including networking, storage, and individual component settings.
+
+### cluster.controlPlaneExternalEndpoint
+
+Describes the per-component address and port through which worker nodes reach the API server and plane tunnel. The two components can be
+exposed on different hosts, allowing them to sit behind separate load balancers.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| apiServer.host | string | IP address or hostname of the API server endpoint, as reached by worker nodes. Must be a bare hostname or IP, no URL scheme or port suffix | — |
+| apiServer.port | integer | Port on the above host that exposes the Kubernetes API server | `30080` |
+| planeTunnel.host | string | IP address or hostname of the plane tunnel endpoint, as reached by worker nodes. Must be a bare hostname or IP, no URL scheme or port suffix | — |
+| planeTunnel.port | integer | Port on the above host that exposes the plane tunnel server | `30081` |
+
+### cluster.apiServer
+
+| Field | Type | Description |
+|-------|------|-------------|
+| sans | []string | Additional Subject Alternative Names added to the API server's serving certificate. Use this to include load-balancer IPs, external hostnames, or any address through which clients reach the API server |
+| extraArgs | map[string]string | Extra flags passed directly to `kube-apiserver`. Keys are flag names without the leading `--` |
+
+### cluster.controllerManager
+
+| Field | Type | Description |
+|-------|------|-------------|
+| extraArgs | map[string]string | Extra flags passed directly to `kube-controller-manager`. Keys are flag names without the leading `--` |
+
+### cluster.scheduler
+
+| Field | Type | Description |
+|-------|------|-------------|
+| extraArgs | map[string]string | Extra flags passed directly to `kube-scheduler`. Keys are flag names without the leading `--` |
+
+### cluster.network
+
+Configures pod and service networking and the CNI plugin, kube-proxy, and CoreDNS deployed inside the tenant cluster.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| podCIDR | string | IP range from which pod IP addresses are allocated | `10.244.0.0/16` |
+| serviceCIDR | string | IP range from which ClusterIP service addresses are allocated | `10.96.0.0/16` |
+| dnsDomain | string | DNS domain suffix for the tenant cluster | `cluster.local` |
+| cni.supplier | string | CNI plugin to install in the tenant cluster. One of `flannel`, `custom` | `flannel` |
+
+#### network.kubeProxy
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| disabled | boolean | Set to `true` to skip deploying kube-proxy entirely, e.g. when a CNI plugin provides its own replacement | `false` |
+| mode | string | kube-proxy proxying mode. One of `iptables`, `ipvs`, `userspace`, `nft` | `iptables` |
+| registrySettings.registry | string | Container registry hostname for the kube-proxy image | `registry.k8s.io` |
+| registrySettings.image | string | kube-proxy image name and tag within the registry | `kube-proxy:v1.35.7` |
+| registrySettings.pullPolicy | string | Image pull policy for the kube-proxy container | — |
+| metricsBindAddress | string | Address kube-proxy binds its metrics endpoint to | — |
+| nodePortAddresses | []string | Restricts NodePort traffic to the given address ranges | — |
+| extraArgs | map[string]string | Extra flags passed directly to the `kube-proxy` process | — |
+| iptables.masqueradeBit | integer | fwmark bit used to mark packets for SNAT, in the `iptables` backend | — |
+| iptables.masqueradeAll | boolean | SNAT all traffic sent via ClusterIP, in the `iptables` backend | — |
+| iptables.localhostNodePorts | boolean | Allow NodePort services to be accessed via `localhost`, in the `iptables` backend | — |
+| iptables.syncPeriod | duration | Maximum interval between iptables rule resyncs | — |
+| iptables.minSyncPeriod | duration | Minimum interval between iptables rule resyncs | — |
+| ipvs.scheduler | string | IPVS load balancing algorithm | — |
+| ipvs.excludeCIDRs | []string | CIDRs excluded from IPVS load balancing | — |
+| ipvs.strictARP | boolean | Enable strict ARP mode, required by some load-balancer integrations (e.g. MetalLB) | — |
+| ipvs.syncPeriod | duration | Maximum interval between IPVS rule resyncs | — |
+| ipvs.minSyncPeriod | duration | Minimum interval between IPVS rule resyncs | — |
+| ipvs.tcpTimeout | duration | IPVS TCP session timeout | — |
+| ipvs.tcpFinTimeout | duration | IPVS TCP FIN wait timeout | — |
+| ipvs.udpTimeout | duration | IPVS UDP session timeout | — |
+| nftables.masqueradeBit | integer | fwmark bit used to mark packets for SNAT, in the `nftables` backend | — |
+| nftables.masqueradeAll | boolean | SNAT all traffic sent via ClusterIP, in the `nftables` backend | — |
+| nftables.syncPeriod | duration | Maximum interval between nftables rule resyncs | — |
+| nftables.minSyncPeriod | duration | Minimum interval between nftables rule resyncs | — |
+
+#### network.coredns
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| replicas | integer | Desired number of CoreDNS pod replicas | `2` |
+| clusterDNSIP | string | ClusterIP address assigned to the CoreDNS Service. Must fall within `serviceCIDR` | `10.96.0.10` |
+| registrySettings.registry | string | Container registry hostname for the CoreDNS image | `registry.k8s.io` |
+| registrySettings.image | string | CoreDNS image name and tag within the registry | `coredns/coredns:v1.13.1` |
+| registrySettings.pullPolicy | string | Image pull policy for the CoreDNS container | — |
+
+### cluster.storage
+
+Configures the storage backend used by the tenant API server in place of etcd.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| type | string | Storage backend to use. Currently only `kine` is supported | `kine` |
+| kine.dataSourceRef | SecretKeySelector | Reference to a Secret key whose value is the kine data source URL, e.g. a SQLite file path or a PostgreSQL connection string. When omitted, kine uses its default SQLite storage location | — |
+
+**Example — `kine.dataSourceRef`:**
+
+```yaml
+cluster:
+  storage:
+    type: kine
+    kine:
+      dataSourceRef:
+        name: my-db-secret   # name of the Kubernetes Secret
+        key: connection-url  # key within the Secret whose value is the data source URL
+```
+
+### cluster.kubelet
+
+Configuration applied to kubelet on every worker node that joins this tenant cluster.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| extraArgs | map[string]string | Extra flags passed directly to the `kubelet` process. Keys are flag names without the leading `--` |
+| configPatches | string | Partial `KubeletConfiguration` document strategically merged on top of the default kubelet configuration written to worker nodes. Only the fields you specify are overridden |
+
+**Example — `configPatches`:**
+
+```yaml
+cluster:
+  kubelet:
+    configPatches: |
+      maxPods: 200
+      evictionHard:
+        memory.available: "100Mi"
+        nodefs.available: "10%"
+      kubeReserved:
+        cpu: "250m"
+        memory: "256Mi"
+```
+
+### cluster.extraResources
+
+| Field | Type | Description |
+|-------|------|-------------|
+| objects | []RawExtension | List of arbitrary Kubernetes manifests applied to the tenant cluster once its API server becomes available. Any valid Kubernetes object is accepted |
+
+---
+
+## Full Example
+
+```yaml
+kind: Runtime
+metadata:
+  name: my-cluster
+  namespace: default
+spec:
+  controlPlane:
+    heir:
+      image: ghcr.io/tardigradeproj/heir:latest
+    deployment:
+      replicas: 1
+      serviceAccountName: default
+    service:
+      serviceType: NodePort
+      apiServerNodePort: 30080
+    planeTunnel:
+      service:
+        serviceType: NodePort
+        nodePort: 30081
+  cluster:
+    controlPlaneExternalEndpoint:
+      apiServer:
+        host: "127.0.0.1"
+        port: 30080
+      planeTunnel:
+        host: "127.0.0.1"
+        port: 30081
+    network:
+      podCIDR: "10.244.0.0/16"
+      serviceCIDR: "10.96.0.0/16"
+      cni:
+        supplier: flannel
+    storage:
+      type: kine
+    apiServer:
+      extraArgs:
+        audit-log-maxage: "30"
+    kubelet:
+      extraArgs:
+        max-pods: "110"
+```
+
+---
+
+## Extra Resources
+
+Heir's philosophy is to provision only what is necessary for a cluster to be considered functional. Unlike distributions that bundle a large set of addons by
+default, Heir ships lean, this reduces the vulnerability surface and avoids wasting resources on tooling that may never be used. Engineers bring addons to
+their clusters based on their own requirements.
+
+To support teams that want to provision clusters upfront with a known set of addons, `extraResources` allows manifests to be defined directly in the `Runtime` spec.
+These resources are created and continuously synced from bootstrap, ensuring that every cluster of a given configuration starts with the same baseline.
+
+```yaml
+cluster:
+  extraResources:
+    objects:
+      - apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: monitoring
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: my-addon
+          namespace: monitoring
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: my-addon
+          template:
+            metadata:
+              labels:
+                app: my-addon
+            spec:
+              containers:
+                - name: my-addon
+                  image: my-addon:latest
+```
+
+

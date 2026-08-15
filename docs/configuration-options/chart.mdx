@@ -1,0 +1,140 @@
+---
+sidebar_position: 1
+---
+
+# Helm Chart
+
+## Overview
+
+The `heir` Helm chart installs the Heir Operator, the controller-manager that watches [`Runtime`](./runtime) and [`WorkerJoinToken`](./worker-join-token)
+custom resources and reconciles them into running tenant clusters. Installing the chart deploys the controller-manager, its CRDs, and the RBAC it needs to
+operate.
+
+```bash
+helm install heir oci://ghcr.io/tardigradeproj/charts/heir --version 1.35.7-heirv0.1.0 \
+  -n heir-system --create-namespace \
+  --set  manager.image.repository=ghcr.io/tardigradeproj/heir-controller-manager
+  --set manager.image.tag=latest
+```
+
+Everything below documents the fields available in the chart's `values.yaml`.
+
+
+## Naming
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| nameOverride | string | Partially overrides the chart's fullname template, while still prefixing it with the release name | — |
+| fullnameOverride | string | Fully overrides the chart's fullname template, replacing the generated resource name prefix entirely | — |
+
+
+
+## manager
+
+Configures the controller-manager Deployment, the single pod that runs the operator's reconcile loops.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| replicas | integer | Desired number of controller-manager pod replicas. Only one replica is ever active at a time — extra replicas stand by as leader-election followers | `1` |
+| image.repository | string | Container image repository for the controller-manager | `controller` |
+| image.tag | string | Container image tag for the controller-manager | `latest` |
+| image.pullPolicy | string | Image pull policy for the controller-manager container | `IfNotPresent` |
+| args | []string | Extra arguments appended to the controller-manager's command line, in addition to the metrics and health-probe flags the chart always sets | `[--leader-elect]` |
+| env | []EnvVar | Environment variables injected into the controller-manager container | `[]` |
+| envOverrides | map[string]string | Overrides for individual environment variables by name, e.g. `--set manager.envOverrides.VAR=value`. Takes precedence over the same name set in `env` | `{}` |
+| imagePullSecrets | []string | Names of image pull secrets attached to the controller-manager pod | `[]` |
+| podSecurityContext | [PodSecurityContext](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/) | Pod-level security settings for the controller-manager pod | `{runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}` |
+| securityContext | [SecurityContext](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/) | Container-level security settings for the controller-manager container | `{allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}` |
+| resources | [ResourceRequirements](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/) | CPU and memory requests and limits for the controller-manager container | `{limits: {cpu: 500m, memory: 128Mi}, requests: {cpu: 10m, memory: 64Mi}}` |
+| affinity | Affinity | Scheduling constraints for the controller-manager pod. See [Kubernetes docs](https://kubernetes.io/docs/tasks/configure-pod-container/assign-pods-nodes-using-node-affinity/) | `{}` |
+| nodeSelector | map[string]string | Node selector for the controller-manager pod | `{}` |
+| tolerations | [][Toleration](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/) | Tolerations applied to the controller-manager pod | `[]` |
+
+**Example — `envOverrides`:**
+
+```bash
+helm install heir ./chart --set manager.envOverrides.LOG_LEVEL=debug
+```
+
+
+
+## rbacHelpers
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| enable | boolean | Install convenience `admin`, `editor`, and `viewer` ClusterRoles scoped to the `Runtime` and `WorkerJoinToken` CRDs, for aggregation into broader user-facing roles | `false` |
+
+
+
+## crd
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| enable | boolean | Install the `Runtime` and `WorkerJoinToken` CustomResourceDefinitions as part of the chart | `true` |
+| keep | boolean | Annotate the CRDs with `helm.sh/resource-policy: keep`, so they — and the custom resources built from them — survive a `helm uninstall`. Set to `false` if uninstalling the chart should also remove the CRDs | `true` |
+
+
+
+## metrics
+
+Controls the controller-manager's `/metrics` endpoint.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| enable | boolean | Expose the `/metrics` endpoint, protected by Kubernetes RBAC via a bearer token, and create the Service that fronts it. When `false`, the controller-manager's metrics server is disabled entirely | `true` |
+| port | integer | Port the metrics endpoint listens on and the metrics Service targets | `8443` |
+
+Reading metrics requires a client with permission to access the metrics Service, e.g. by binding the chart's `metrics-reader` ClusterRole to a
+ServiceAccount and presenting its token as a bearer token over HTTPS.
+
+
+
+## certManager
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| enable | boolean | Use [cert-manager](https://cert-manager.io/) to issue and rotate the TLS certificate securing the metrics endpoint. Requires cert-manager to already be installed in the cluster. When `false`, the metrics endpoint's `ServiceMonitor` (if enabled) is configured to skip TLS verification instead | `false` |
+
+
+
+## prometheus
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| enable | boolean | Create a `ServiceMonitor` so a [prometheus-operator](https://github.com/prometheus-operator/prometheus-operator) instance in the cluster scrapes the controller-manager's `/metrics` endpoint. Requires the `monitoring.coreos.com` CRDs to already be installed | `false` |
+
+
+
+## Full Example
+
+```yaml
+manager:
+  replicas: 2
+  image:
+    repository: ghcr.io/tardigradeproj/heir-operator
+    tag: v0.3.0
+  resources:
+    limits:
+      cpu: "1"
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+rbacHelpers:
+  enable: true
+
+crd:
+  enable: true
+  keep: true
+
+metrics:
+  enable: true
+  port: 8443
+
+certManager:
+  enable: true
+
+prometheus:
+  enable: true
+```

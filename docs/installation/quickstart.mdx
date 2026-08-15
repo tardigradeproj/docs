@@ -208,6 +208,25 @@ NAME             STATUS     ROLES    AGE   VERSION
 Right after joining, the node may briefly show `NotReady` while the CNI finishes coming up. Give it a few minutes and re-run the
 command, it should flip to `Ready`.
 
+### 6. Run a Workload
+
+With a `Ready` node in place, schedule something on it:
+
+```bash
+kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml run nginx --image=nginx
+```
+
+Watch it come up:
+
+```bash
+kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml get pods -w
+```
+
+```text
+NAME    READY   STATUS    RESTARTS   AGE
+nginx   1/1     Running   0          14s
+```
+
 ## Next Steps
 
 [Requirements](./requirements) — Read this before moving to production. It covers hardware, networking, and OS prerequisites that are not enforced in the quickstart.

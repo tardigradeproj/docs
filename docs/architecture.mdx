@@ -21,8 +21,7 @@ this availability, entirely eliminating the need to provision or maintain duplic
 ![Heir cluster architecture](/img/cluster-architecture.svg)
 
 Heir is split into two distinct planes: the `control plane`, which runs inside the management cluster, and the `data plane`, which runs on worker nodes.
-The two communicate exclusively over connections initiated by worker nodes, the control plane never reaches out to workers directly.
-
+The two communicate exclusively over connections started by worker nodes.
 
 
 ## Control Plane
@@ -33,9 +32,14 @@ services such as EKS, GKE, AKS, or DOKS.
 
 ![Heir control plane](/img/control-plane.svg)
 
-Running as a stateless pod has a fundamental implication: the control plane is no longer a special snowflake that requires dedicated infrastructure and specialist knowledge to keep alive. It is just another workload. Kubernetes already knows how to schedule, restart, and reschedule workloads, and it does the same for Heir control planes. State is never stored in the pod itself; it lives in an external storage backend, so the pod can be terminated and restarted on any node at any time without data loss.
+Running as a stateless pod has a fundamental implication: the control plane is no longer a special snowflake that requires dedicated infrastructure and specialist knowledge
+to keep alive. It is just another workload. Kubernetes already knows how to schedule, restart, and reschedule workloads, and it does the same for Heir control planes. State
+is never stored in the pod itself; it lives in an external storage backend, so the pod can be terminated and restarted on any node at any time without data loss.
 
-This also means availability is no longer a per-cluster concern. When a new tenant cluster is provisioned, its control plane inherits the availability guarantees of the management cluster without any additional infrastructure. A management cluster backed by a managed Kubernetes service with a multi-zone control plane gives every tenant cluster running on it the same resilience, for free.
+This also means availability is no longer a per-cluster concern. When a new tenant cluster is provisioned, its control plane inherits the availability guarantees of the
+management cluster without any additional infrastructure. A management cluster backed by a managed Kubernetes service with a multi-zone control plane gives every tenant cluster
+running on it the same resilience, for free.
+
 
 ### Process Model
 
@@ -48,17 +52,11 @@ dependencies, it also means the container can be stopped and restarted at any ti
 The more abstract "one thing per container" is our policy - a container should do one thing, such as "run a chat service" or "run gitlab." This may involve
 multiple processes, which is fine.
 
-### Master Agent
+### Cluster Agent
 
-The MasterAgent is a process that runs inside every Heir control plane pod. It starts and owns the [kine storage](https://github.com/k3s-io/kine) process, which provides the API server
-with an etcd-compatible interface backed by an external database. Alongside kine, it aggregates the health of all Kubernetes control plane components and
-exposes a readiness endpoint used for health checks by the Management runtime.
-
-The MasterAgent also solves an address resolution problem inherent to running the API server as a pod. When the API server starts inside a management cluster
-pod, the `kubernetes` Service in the default namespace is set to the cluster-internal address, which is unreachable by worker nodes that live
-in a different network. To bridge this gap, the MasterAgent continuously reads control plane addresses from `cluster.controlPlaneExternalEndpoint`, resolves
-any hostnames to IPs, and updates the EndpointSlice backing the `kubernetes` Service in the default namespace. This keeps in-cluster DNS resolution of
-`kubernetes.default.svc` accurate as the control plane's network topology changes, without requiring manual intervention or pod restarts.
+The `cluster agent` is the controller that keeps a tenant cluster running once it has bootstrapped, as its name suggests. It performs four jobs: approving kubelet
+bootstrap CSRs, keeping the kubernetes Service's endpoints in the default namespace up to date, reconciling WorkerJoinToken resources so new worker nodes can
+join the cluster, and running the Helm chart controller that installs and manages addons. Heir provisions exactly one cluster agent per cluster.
 
 ### Operators and Addons
 
@@ -103,7 +101,7 @@ necessary to submit a Certificate Signing Request. Once TLS bootstrap completes,
 longer used and the node authenticates exclusively with its signed client certificate.
 
 When `heir worker` starts, it uses the bootstrap token to submit a CSR to the API server requesting a kubelet client certificate identifying the
-node as `system:node:[hostname]`. The MasterAgent watches for pending CSRs and approves them only after verifying that every SAN in the
+node as `system:node:[hostname]`. The `Cluster Agent` watches for pending CSRs and approves them only after verifying that every SAN in the
 request matches an address already registered on the corresponding Node object. This prevents a compromised token from being used to obtain
 certificates for arbitrary node identities.
 
@@ -112,7 +110,8 @@ certificates for arbitrary node identities.
 
 ## Network Model
 
-All connections flow from worker nodes to the control plane. The control plane never initiates connections to workers. Requests from the control plane to workloads on workers (such as `kubectl exec` or log streaming) are tunneled over the same outbound connection established by the worker through multiplexing.
+All connections flow from worker nodes to the control plane. The control plane never initiates connections to workers. Requests from the control plane to workloads on workers
+(such as `kubectl exec` or log streaming) are tunneled over the same outbound connection established by the worker through multiplexing.
 
 This design has practical consequences:
 

@@ -9,7 +9,7 @@ sidebar_position: 2
 The `Runtime` custom resource is the primary way to configure a Heir tenant cluster. Its spec is split into two top-level sections:
 
 - `controlPlane` — controls how the tenant control plane is deployed inside the management cluster (image, replicas, service exposure, plane tunnel)
-- `cluster` — controls the Kubernetes cluster itself (networking, storage, API server configuration, worker node settings)
+- `cluster` — controls the Kubernetes cluster itself (networking, storage, API server configuration, worker node settings, addons)
 
 ```yaml
 kind: Runtime
@@ -30,9 +30,15 @@ nodes reach it.
 
 ### controlPlane.heir
 
-| Field | Type | Description |
-|-------|------|-------------|
-| image | string | Fully qualified container image for the Heir control plane, e.g. `ghcr.io/tardigradeproj/heir:v1.2.3` |
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| image | string | Fully qualified container image for the Heir control plane, e.g. `ghcr.io/tardigradeproj/heir:v1.2.3` | — |
+
+### controlPlane.clusterAgent
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| image | string | Fully qualified container image for the Heir ClusterAgent, e.g. `ghcr.io/tardigradeproj/clusteragent:v1.2.3` | — |
 
 ### controlPlane.deployment
 
@@ -137,14 +143,13 @@ exposed on different hosts, allowing them to sit behind separate load balancers.
 
 ### cluster.network
 
-Configures pod and service networking and the CNI plugin, kube-proxy, and CoreDNS deployed inside the tenant cluster.
+Configures pod and service networking and kube-proxy deployed inside the tenant cluster.
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
 | podCIDR | string | IP range from which pod IP addresses are allocated | `10.244.0.0/16` |
 | serviceCIDR | string | IP range from which ClusterIP service addresses are allocated | `10.96.0.0/16` |
 | dnsDomain | string | DNS domain suffix for the tenant cluster | `cluster.local` |
-| cni.supplier | string | CNI plugin to install in the tenant cluster. One of `flannel`, `custom` | `flannel` |
 
 #### network.kubeProxy
 
@@ -175,16 +180,6 @@ Configures pod and service networking and the CNI plugin, kube-proxy, and CoreDN
 | nftables.masqueradeAll | boolean | SNAT all traffic sent via ClusterIP, in the `nftables` backend | — |
 | nftables.syncPeriod | duration | Maximum interval between nftables rule resyncs | — |
 | nftables.minSyncPeriod | duration | Minimum interval between nftables rule resyncs | — |
-
-#### network.coredns
-
-| Field | Type | Description | Default |
-|-------|------|-------------|---------|
-| replicas | integer | Desired number of CoreDNS pod replicas | `2` |
-| clusterDNSIP | string | ClusterIP address assigned to the CoreDNS Service. Must fall within `serviceCIDR` | `10.96.0.10` |
-| registrySettings.registry | string | Container registry hostname for the CoreDNS image | `registry.k8s.io` |
-| registrySettings.image | string | CoreDNS image name and tag within the registry | `coredns/coredns:v1.13.1` |
-| registrySettings.pullPolicy | string | Image pull policy for the CoreDNS container | — |
 
 ### cluster.storage
 
@@ -231,11 +226,52 @@ cluster:
         memory: "256Mi"
 ```
 
-### cluster.extraResources
+### cluster.addons
+
+Configures cluster addons installed via the HelmChart controller. `coredns` and `flannel` are built-in default addons, enabled automatically.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| helm.runtime.image | string | Image that runs `helm` for every addon's installer Job | `ghcr.io/tardigradeproj/helmer:latest` |
+| helm.charts | [][AddonChartSpec](#addonchartspec) | List of addons to enable, disable, install, or override | — |
+
+#### AddonChartSpec
 
 | Field | Type | Description |
 |-------|------|-------------|
-| objects | []RawExtension | List of arbitrary Kubernetes manifests applied to the tenant cluster once its API server becomes available. Any valid Kubernetes object is accepted |
+| name | string | Identifies the addon |
+| enabled | boolean | Set to `false` to disable one of Heir's built-in default addons (`coredns`, `flannel`). Only applies to a built-in addon |
+| install | [HelmChartSpec](../addon#helmchart) | Adds an entirely new Helm chart for an addon that isn't one of Heir's built-in defaults. Mirrors a [`HelmChart`](../addon#helmchart) resource's own spec exactly |
+| override.values | [ValuesSpec](#addon-values) | Customizes one of Heir's built-in default addons' Helm values, without changing its chart source |
+
+#### Addon values
+
+| Field | Type | Description |
+|-------|------|-------------|
+| set | map[string]string | Overrides simple chart values. Takes precedence over `content` |
+| content | string | Overrides complex chart values via inline YAML content |
+
+**Example — disabling a built-in addon and overriding another:**
+
+```yaml
+cluster:
+  addons:
+    helm:
+      charts:
+        - name: flannel
+          enabled: false
+        - name: coredns
+          override:
+            values:
+              content: |
+                replicaCount: 3
+        - name: metrics-server
+          install:
+            chart:
+              name: metrics-server
+              repo: https://kubernetes-sigs.github.io/metrics-server/
+              targetNamespace: kube-system
+```
 
 ---
 
@@ -250,6 +286,8 @@ spec:
   controlPlane:
     heir:
       image: ghcr.io/tardigradeproj/heir:latest
+    clusterAgent:
+      image: ghcr.io/tardigradeproj/clusteragent:latest
     deployment:
       replicas: 1
       serviceAccountName: default
@@ -271,8 +309,6 @@ spec:
     network:
       podCIDR: "10.244.0.0/16"
       serviceCIDR: "10.96.0.0/16"
-      cni:
-        supplier: flannel
     storage:
       type: kine
     apiServer:
@@ -281,45 +317,12 @@ spec:
     kubelet:
       extraArgs:
         max-pods: "110"
+    addons:
+      helm:
+        charts:
+          - name: coredns
+            override:
+              values:
+                content: |
+                  replicaCount: 2
 ```
-
----
-
-## Extra Resources
-
-Heir's philosophy is to provision only what is necessary for a cluster to be considered functional. Unlike distributions that bundle a large set of addons by
-default, Heir ships lean, this reduces the vulnerability surface and avoids wasting resources on tooling that may never be used. Engineers bring addons to
-their clusters based on their own requirements.
-
-To support teams that want to provision clusters upfront with a known set of addons, `extraResources` allows manifests to be defined directly in the `Runtime` spec.
-These resources are created and continuously synced from bootstrap, ensuring that every cluster of a given configuration starts with the same baseline.
-
-```yaml
-cluster:
-  extraResources:
-    objects:
-      - apiVersion: v1
-        kind: Namespace
-        metadata:
-          name: monitoring
-      - apiVersion: apps/v1
-        kind: Deployment
-        metadata:
-          name: my-addon
-          namespace: monitoring
-        spec:
-          replicas: 1
-          selector:
-            matchLabels:
-              app: my-addon
-          template:
-            metadata:
-              labels:
-                app: my-addon
-            spec:
-              containers:
-                - name: my-addon
-                  image: my-addon:latest
-```
-
-

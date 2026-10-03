@@ -1,0 +1,184 @@
+---
+sidebar_position: 7
+---
+
+# Addons
+
+## Overview
+
+Heir supports deploying applications into the cluster using Helm charts. By default, Heir boots the cluster with CoreDNS and the Flannel CNI,
+each installed as a Helm chart addon.
+
+Addons are configured under `cluster.addons.helm` on the [`Runtime`](./configuration-options/runtime) resource, keyed by name in the `charts`
+list. `charts` entries are uniquely identified by `name`, declaring the same name twice is rejected by the API server. Use `enabled: false` to
+disable one of Heir's built-in addons, `install` to add an entirely new chart, or `override` to customize a built-in addon's Helm values without
+replacing its chart source:
+
+```yaml
+kind: Runtime
+metadata:
+  name: my-cluster
+  namespace: default
+spec:
+  cluster:
+    addons:
+      helm:
+        runtime:
+          image: <image> # overrides spec.runtime.image for every addon's HelmChart
+        charts:
+          - name: coredns
+            enabled: false
+          - name: cilium # user defined addon
+            install:
+              chart:
+                name: cilium
+                repo: https://helm.cilium.io/
+                version: "1.15.0"
+          - name: metrics-server # override addon default value
+            override:
+              values:
+                content: |
+                  replicas: 2
+```
+
+---
+
+## Overriding Default Addon Values
+
+Heir's built-in addons ship with their own default Helm values. Setting `override.values` on a `charts` entry replaces those defaults entirely,
+it is not merged with them, so any default value you still want must be included alongside the one you're changing.
+
+CoreDNS, for example, installs with:
+
+```yaml
+replicaCount: 1
+service:
+  clusterIP: "10.96.0.10"
+```
+
+To scale CoreDNS to 3 replicas while keeping its default `clusterIP`, both fields need to be present in the override:
+
+```yaml
+kind: Runtime
+metadata:
+  name: my-cluster
+  namespace: default
+spec:
+  ...
+  cluster:
+    addons:
+      helm:
+        charts:
+          - name: coredns
+            override:
+              values:
+                content: |
+                  replicaCount: 3
+                  service:
+                    clusterIP: "10.96.0.10"
+```
+
+---
+
+## HelmChart
+
+Each addon is installed via a `HelmChart` resource, which an addon's `install` block configures directly, `install` mirrors a `HelmChart`'s
+`spec` exactly.
+
+```yaml
+kind: HelmChart
+metadata:
+  name: metrics-server
+spec:
+  chart:
+    name: metrics-server
+    repo: https://kubernetes-sigs.github.io/metrics-server/
+    version: 3.12.1
+    targetNamespace: kube-system
+```
+
+### spec.chart
+
+Identifies the Helm chart to install and where it is installed to.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| name | string | Helm chart name in the repository | — |
+| repo | string | Helm chart repository URL | — |
+| version | string | Helm chart version to install, when installing from a repository | — |
+| targetNamespace | string | Namespace the Helm chart is installed into | `default` |
+| createNamespace | boolean | Creates `targetNamespace` if it does not already exist | `false` |
+
+### spec.helm
+
+Controls how the Helm operation itself is run.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| version | string | Helm binary version to use. One of `v2`, `v3` | `v3` |
+| insecureSkipTLSVerify | boolean | Skips TLS certificate checks when downloading the chart | `false` |
+| atomic | boolean | Rolls back the release on install/upgrade failure and waits for resources to become ready | `false` |
+| backOffLimit | integer | Number of retries allowed before the job is considered failed | `10` |
+| timeout | duration | Timeout for Helm operations | `300s` |
+
+### spec.runtime
+
+Controls the Job created to run Helm.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| bootstrap | boolean | Marks this chart as required to bootstrap the cluster (e.g. CoreDNS, kube-proxy) | `false` |
+| image | string | Image used to run the Helm job | `ghcr.io/tardigradeproj/helmer:latest` |
+| securityContext | [PodSecurityContext](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/) | Custom PodSecurityContext applied to the Helm job pod | — |
+
+### spec.values
+
+Overrides the chart's default values.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| set | map[string]string | Overrides simple chart values. Takes precedence over `content` |
+| content | string | Overrides complex chart values via inline YAML content |
+
+**Example:**
+
+```yaml
+spec:
+  chart:
+    name: coredns
+    repo: https://coredns.github.io/helm
+    targetNamespace: kube-system
+  values:
+    content: |
+      replicaCount: 3
+```
+
+### status
+
+| Field | Type | Description |
+|-------|------|-------------|
+| conditions | []Condition | Current state of the `HelmChart`. `Ready` is `True` once the install Job completes successfully, `False` if it fails |
+
+### Full Example
+
+```yaml
+kind: HelmChart
+metadata:
+  name: metrics-server
+spec:
+  chart:
+    name: metrics-server
+    repo: https://kubernetes-sigs.github.io/metrics-server/
+    version: 3.12.1
+    targetNamespace: kube-system
+    createNamespace: true
+  helm:
+    version: v3
+    atomic: true
+    timeout: 5m
+  runtime:
+    image: ghcr.io/tardigradeproj/helmer:latest
+  values:
+    set:
+      args[0]: --kubelet-insecure-tls
+```

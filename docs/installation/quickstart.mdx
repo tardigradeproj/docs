@@ -49,7 +49,7 @@ EOF
 
 ### 2. Install the Heir Operator
 
-The Heir Operator is the controller-manager that watches `Runtime` and `WorkerJoinToken` resources and reconciles them into running tenant clusters. Install it into the management cluster with Helm:
+The Heir Operator is the controller-manager that watches `Runtime` resources and reconciles them into running tenant clusters. Install it into the management cluster with Helm:
 
 ```bash
 helm install heir oci://ghcr.io/tardigradeproj/charts/heir --version 1.35.7-heirv0.1.0 \
@@ -69,7 +69,7 @@ See [Helm Chart](../configuration-options/chart) for the full set of values the 
 
 ### 3. Deploy the Control Plane
 
-First, create the `Runtime` resource. This tells the Operator how to deploy the control plane and which ports to expose. See [Configuration Options](../configuration-options/runtime) for a full reference.
+First, create the `Runtime` resource. This tells the Heir how the cluster should be deployed, scaled, configured and exposed. See [Configuration Options](../configuration-options/runtime) for a full reference.
 
 ```bash
 cat <<\EOF > ./heir.yaml
@@ -82,6 +82,8 @@ spec:
   controlPlane:
     heir:
       image: ghcr.io/tardigradeproj/heir:latest
+    clusterAgent:
+      image: ghcr.io/tardigradeproj/clusteragent:latest
     deployment:
       replicas: 1
     service:
@@ -121,9 +123,9 @@ kubectl --kubeconfig ./management-cluster.yaml get secret heir-quickstart-kubeco
 ```
 
 :::tip[Running the worker on a different machine]
-The server address baked into that kubeconfig is whatever you set as `cluster.controlPlaneExternalEndpoint.apiServer.host` in `heir.yaml`, `127.0.0.1` above.
+The server address baked into that kubeconfig is whatever you set as `cluster.controlPlaneExternalEndpoint.apiServer.host` in `heir.yaml`.
 That works as-is if you run every command on this page from the same machine that's running Kind, since Kind also maps the same NodePort (`30080`) onto your host.
-If the worker node or your `kubectl` client lives on a different machine, use a host address that machine can actually reach instead, and override the
+If the worker node or your `kubectl` client lives on a different machine, use a host address that your bastion host can actually reach instead, and override the
 generated kubeconfig accordingly:
 
 ```bash
@@ -134,7 +136,7 @@ kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml config set-cluster heir-q
 Once the command completes, verify the cluster is up:
 
 ```bash
-kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml get nodes
+kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml get pods
 ```
 
 ### 4. Join a Worker Node
@@ -148,20 +150,18 @@ Installing Heir on the worker node is required before joining.
 curl -sSL https://raw.githubusercontent.com/tardigradeproj/heir/refs/heads/main/install.sh | HEIR_VERSION=latest sh
 ```
 
-A worker can't register with the tenant cluster until it presents a bootstrap credential scoped to that specific `Runtime Cluster`. Creating a `WorkerJoinToken`
-resource tells the Operator to generate that credential and publish it as a Secret for the worker to use. Create one from your local machine (where
-`management-cluster.yaml` lives) by applying it as a resource. See [WorkerJoinToken](../configuration-options/worker-join-token) for the full reference:
+A worker can't register with the tenant cluster until it presents a bootstrap credential. Creating a `WorkerJoinToken` resource tells the
+cluster agent to generate that credential and publish it as a Secret for the worker to use. `WorkerJoinToken` is reconciled against the tenant
+cluster itself, so apply it using the tenant kubeconfig you fetched in step 3 (`heir-quickstart-kubeconfig.yaml`), not the management cluster's.
+See [WorkerJoinToken](../configuration-options/worker-join-token) for the full reference:
 
 ```bash
-cat <<EOF | kubectl --kubeconfig ./management-cluster.yaml apply -f -
-apiVersion: controlplane.tardigrade.runtime.io/v1alpha1
+cat <<EOF | kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml apply -f -
+apiVersion: clusteragent.tardigrade.runtime.io/v1alpha1
 kind: WorkerJoinToken
 metadata:
   name: new-node
-  namespace: default
 spec:
-  runtimeRef:
-    name: heir-quickstart
   ttl: 3h
 EOF
 ```
@@ -169,25 +169,25 @@ EOF
 Wait until it's ready:
 
 ```bash
-kubectl --kubeconfig ./management-cluster.yaml wait workerjointoken/new-node --for=condition=Ready --timeout=60s
+kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml wait workerjointoken/new-node --for=condition=Ready --timeout=60s
 ```
 
-You can check on it at any point with `kubectl get workerjointoken`, which reports the owning `Runtime`, readiness, and expiry:
+You can check on it at any point with `kubectl get workerjointoken`, which reports readiness and expiry:
 
 ```bash
-kubectl --kubeconfig ./management-cluster.yaml get workerjointoken
+kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml get workerjointoken
 ```
 
 ```text
-NAME       RUNTIME           READY   REASON        EXPIRES                AGE
-new-node   heir-quickstart   True    TokenIssued   2026-08-09T23:25:34Z   9s
+NAME       READY   REASON        EXPIRES                AGE
+new-node   True    TokenIssued   2026-08-09T23:25:34Z   9s
 ```
 
-The controller publishes the generated bootstrap token as the `jointoken` key of a `<name>-jointoken` Secret in the management cluster.
-Fetch it and join the worker node in one step:
+The controller publishes the generated bootstrap token as the `jointoken` key of a `<name>-jointoken` Secret in the tenant cluster's
+`kube-system` namespace. Fetch it and join the worker node in one step:
 
 ```bash
-JOIN_TOKEN=$(kubectl --kubeconfig ./management-cluster.yaml get secret new-node-jointoken -o jsonpath='{.data.jointoken}')
+JOIN_TOKEN=$(kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml get secret new-node-jointoken -n kube-system -o jsonpath='{.data.jointoken}')
 
 sudo heir provision worker --token="$JOIN_TOKEN"
 ```

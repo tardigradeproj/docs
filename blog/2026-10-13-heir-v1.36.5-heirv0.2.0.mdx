@@ -1,0 +1,110 @@
+---
+slug: heir-v1.36.5-heirv0.2.0
+title: "Heir v1.36.5-heirv0.2.0"
+authors: [edwin]
+tags: [heir, kubernetes]
+---
+
+Heir v1.36.5-heirv0.2.0 is out, tracking Kubernetes v1.36.5. The headline change is how addons work: CoreDNS and the Flannel CNI are no longer
+rendered from bespoke `Runtime` fields, they're Helm charts you can disable, override, or replace, alongside any other chart you want installed
+at bootstrap. Backing that is a new component, `clusteragent`, which now owns everything that has to act against the cluster itself.
+
+{/* truncate */}
+
+## Helm-based cluster addons
+
+Up to this release, addons like CoreDNS and the CNI plugin were provisioned from manifests rendered by the control plane, which meant the
+`Runtime` CRD grew a bespoke, typed field for every setting each one needed. That doesn't scale past a handful of addons, so it's been replaced
+with a [Helm controller](/addon/helm-controller) instead. `spec.cluster.addons.helm` now lets a `Runtime` manage its own addons:
+
+```yaml
+spec:
+  cluster:
+    addons:
+      helm:
+        charts:
+          - name: coredns
+            enabled: false
+          - name: cilium
+            install:
+              chart:
+                name: cilium
+                repo: https://helm.cilium.io/
+                version: "1.15.0"
+          - name: metrics-server
+            override:
+              values:
+                content: |
+                  replicas: 2
+```
+
+Use `enabled: false` to drop one of Heir's built-in addons, `install` to add an entirely new chart to the bootstrap phase, or `override` to
+tweak a built-in addon's Helm values without touching its chart source. Each entry is keyed by `name`.
+
+
+## A dedicated clusteragent
+
+Everything that needs to reach into the *tenant* cluster, rather than just manage the management cluster's view of it, now lives in its own
+component: `clusteragent`. That's worker join tokens, kubelet-serving CSR approval, Kubernetes Service `EndpointSlice` sync, and the new Helm
+addon/`HelmChart` reconciler described above. Splitting it out keeps the management-cluster controller manager focused on the management cluster (guarantee that the cluster is healthy),
+and gives the tenant-facing half its own image, CRDs, RBAC, and release cadence.
+
+## WorkerJoinToken and HelmChart move clusters
+
+This is the release's breaking change: `WorkerJoinToken` and `HelmChart` moved out of the `controlplane` API group into a new one,
+`clusteragent.tardigrade.runtime.io/v1alpha1`, and are now reconciled against the *tenant* cluster, not the management cluster. `WorkerJoinToken`
+is also cluster-scoped now, and no longer carries a `runtimeRef`, it's always bound to the cluster it's created against, so there's nothing left
+to point at:
+
+```yaml
+apiVersion: clusteragent.tardigrade.runtime.io/v1alpha1
+kind: WorkerJoinToken
+metadata:
+  name: new-node
+spec:
+  ttl: 3h
+```
+
+If you have any tooling that applies or reads either resource under the old `controlplane` group, or against the management cluster's
+kubeconfig, it needs to target the new group and the tenant's own kubeconfig instead. See the updated
+[WorkerJoinToken](/configuration-options/worker-join-token) reference and [Quickstart](/installation/quickstart) for the new shape end-to-end.
+
+The typed `cluster.network.coredns` and `cluster.network.cni` `Runtime` fields are gone as a consequence, both are provisioned exclusively
+through `spec.cluster.addons.helm.charts` now, and if you were using the previous map-keyed `spec.cluster.addons` shape, it's been restructured
+into the `charts` list shown above.
+
+## CLI cleanup
+
+`heir build` and `heir provision controlplane` have been removed. They were superseded a while ago by the goreleaser/Dockerfile image pipeline
+and the `Runtime` CRD controller respectively, and had no remaining callers. `heir delete controlplane` is unaffected. Separately, if you import
+Heir's Go packages directly: `api/v1alpha1` and `internal/controller` moved to `api/controlplane/v1alpha1` and
+`internal/controller/controlplane` as part of migrating to kubebuilder's multi-group layout, which is what unblocked adding the `clusteragent`
+group in the first place.
+
+## Fixes worth knowing about
+
+- **PKI SAN rotation now rolls control-plane and plane-tunnel pods.** Previously only the PKI Secret was regenerated; running pods kept serving
+  stale certificates until something else happened to restart them.
+- **`WorkerJoinToken` no longer rewrites its status on every reconcile**, which had been bumping `resourceVersion` and re-triggering its own
+  watch in a tight loop.
+- **containerd and its containers now survive a `heir` restart.** The generated systemd unit used `KillMode=control-group`, which signalled
+  every process in heir's cgroup, containerd, shims, every running container, on stop or restart. It's now `KillMode=process` with
+  `Delegate=yes`, so only heir's own PID is signalled and kubelet/containerd keep managing their own per-pod cgroups.
+- Removed kubelet's `--runtime-cgroups` flag, which pointed at a `containerd.service` cgroup that never exists under heir's process model.
+- `heir provision worker` no longer fails with `open ... text file busy` when re-run against an already-joined node.
+
+
+## containerd config schema v4
+
+The generated containerd config migrated to schema v4, a requirement from containerd 2.3+, which splits the CRI plugin into separate
+images/runtime plugins. The generated `config.toml` also now imports `/etc/lib/heir/containerd/conf.d/*.toml`, so you can layer extra config,
+a registry mirror, for example, in a separate file that survives `heir provision worker` regenerating the main file on every run.
+
+## Local development with docker-compose
+
+Local worker nodes are now `docker-compose` bootloose containers instead of Vagrant VMs, mirroring the same image, privilege, and cgroup setup
+the e2e test helper already used. A new `.local/run-locally.sh` script drives the whole walkthrough end to end: build, stand up the management
+cluster, deploy the controller manager, provision a tenant `Runtime`, wait for `clusteragent` to come up, mint and deliver join tokens, join both
+`dev-worker0` and `dev-worker1`, and confirm both reach `Ready`.
+
+

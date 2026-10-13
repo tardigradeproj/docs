@@ -54,9 +54,12 @@ multiple processes, which is fine.
 
 ### Cluster Agent
 
-The `cluster agent` is the controller that keeps a tenant cluster running once it has bootstrapped, as its name suggests. It performs four jobs: approving kubelet
-bootstrap CSRs, keeping the kubernetes Service's endpoints in the default namespace up to date, reconciling WorkerJoinToken resources so new worker nodes can
-join the cluster, and running the Helm chart controller that installs and manages addons. Heir provisions exactly one cluster agent per cluster.
+While the `Runtime` controller is responsible for provisioning a tenant cluster's control plane, `clusteragent` is what keeps that cluster running once it's
+bootstrapped. If the `Runtime` controller is the shipyard, building the ship once, launching it, and coming back only for major refits (cert rotations,
+upgrades), `clusteragent` is the ship's captain. It runs as its own Deployment in the management cluster, but acts directly against the tenant cluster it
+serves, handling everything the control plane can't do for itself: approving kubelet-serving certificate requests, processing worker nodes' requests to
+join the cluster, syncing Kubernetes Service EndpointSlices, and running the Helm Controller that installs and manages addons. Heir provisions exactly one
+`clusteragent` per tenant cluster.
 
 ### Operators and Addons
 

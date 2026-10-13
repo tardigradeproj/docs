@@ -52,11 +52,11 @@ EOF
 The Heir Operator is the controller-manager that watches `Runtime` resources and reconciles them into running tenant clusters. Install it into the management cluster with Helm:
 
 ```bash
-helm install heir oci://ghcr.io/tardigradeproj/charts/heir --version 1.35.7-heirv0.1.0 \
+helm install heir oci://ghcr.io/tardigradeproj/charts/heir --version 1.36.5-heirv0.2.0 \
   --kubeconfig ./management-cluster.yaml \
   -n heir-system --create-namespace \
   --set manager.image.repository=ghcr.io/tardigradeproj/heir-controller-manager \
-  --set manager.image.tag=v1.35.7-heirv0.1.0
+  --set manager.image.tag=v1.36.5-heirv0.2.0
 ```
 
 Verify the operator is running before continuing:
@@ -180,7 +180,7 @@ kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml get workerjointoken
 
 ```text
 NAME       READY   REASON        EXPIRES                AGE
-new-node   True    TokenIssued   2026-08-09T23:25:34Z   9s
+new-node   True    TokenIssued   20XX-XX-XXT23:25:34Z   9s
 ```
 
 The controller publishes the generated bootstrap token as the `jointoken` key of a `<name>-jointoken` Secret in the tenant cluster's
@@ -202,7 +202,7 @@ kubectl --kubeconfig ./heir-quickstart-kubeconfig.yaml get nodes
 
 ```text
 NAME             STATUS     ROLES    AGE   VERSION
-<hostname>       NotReady   <none>   9s    v1.35.7
+<hostname>       NotReady   <none>   9s    v1.36.5
 ```
 
 Right after joining, the node may briefly show `NotReady` while the CNI finishes coming up. Give it a few minutes and re-run the

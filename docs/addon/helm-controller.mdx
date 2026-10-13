@@ -1,15 +1,19 @@
 ---
-sidebar_position: 7
+sidebar_position: 2
 ---
 
-# Addons
+# Helm Controller
 
 ## Overview
+
+Helm is the most convenient way of packaging and managing Kubernetes manifests. The Helm Controller is what lets Heir manage the full lifecycle
+of a chart, install, upgrade, and uninstall, declaratively: instead of running `helm` by hand against the cluster, you describe the chart you
+want as a `HelmChart` resource, and the controller reconciles it into a Job that runs the matching `helm` operation.
 
 Heir supports deploying applications into the cluster using Helm charts. By default, Heir boots the cluster with CoreDNS and the Flannel CNI,
 each installed as a Helm chart addon.
 
-Addons are configured under `cluster.addons.helm` on the [`Runtime`](./configuration-options/runtime) resource, keyed by name in the `charts`
+Addons are configured under `cluster.addons.helm` on the [`Runtime`](../configuration-options/runtime) resource, keyed by name in the `charts`
 list. `charts` entries are uniquely identified by `name`, declaring the same name twice is rejected by the API server. Use `enabled: false` to
 disable one of Heir's built-in addons, `install` to add an entirely new chart, or `override` to customize a built-in addon's Helm values without
 replacing its chart source:
@@ -41,7 +45,7 @@ spec:
                   replicas: 2
 ```
 
----
+
 
 ## Overriding Default Addon Values
 
@@ -78,12 +82,9 @@ spec:
                     clusterIP: "10.96.0.10"
 ```
 
----
 
-## HelmChart
 
-Each addon is installed via a `HelmChart` resource, which an addon's `install` block configures directly, `install` mirrors a `HelmChart`'s
-`spec` exactly.
+## HelmChart resource
 
 ```yaml
 kind: HelmChart
@@ -97,7 +98,7 @@ spec:
     targetNamespace: kube-system
 ```
 
-### spec.chart
+## spec.chart
 
 Identifies the Helm chart to install and where it is installed to.
 
@@ -109,7 +110,7 @@ Identifies the Helm chart to install and where it is installed to.
 | targetNamespace | string | Namespace the Helm chart is installed into | `default` |
 | createNamespace | boolean | Creates `targetNamespace` if it does not already exist | `false` |
 
-### spec.helm
+## spec.helm
 
 Controls how the Helm operation itself is run.
 
@@ -121,7 +122,7 @@ Controls how the Helm operation itself is run.
 | backOffLimit | integer | Number of retries allowed before the job is considered failed | `10` |
 | timeout | duration | Timeout for Helm operations | `300s` |
 
-### spec.runtime
+## spec.runtime
 
 Controls the Job created to run Helm.
 
@@ -131,7 +132,7 @@ Controls the Job created to run Helm.
 | image | string | Image used to run the Helm job | `ghcr.io/tardigradeproj/helmer:latest` |
 | securityContext | [PodSecurityContext](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/) | Custom PodSecurityContext applied to the Helm job pod | — |
 
-### spec.values
+## spec.values
 
 Overrides the chart's default values.
 
@@ -153,13 +154,13 @@ spec:
       replicaCount: 3
 ```
 
-### status
+## status
 
 | Field | Type | Description |
 |-------|------|-------------|
 | conditions | []Condition | Current state of the `HelmChart`. `Ready` is `True` once the install Job completes successfully, `False` if it fails |
 
-### Full Example
+## Full Example
 
 ```yaml
 kind: HelmChart

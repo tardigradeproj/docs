@@ -241,7 +241,7 @@ Configures cluster addons installed via the HelmChart controller. `coredns` and 
 |-------|------|-------------|
 | name | string | Identifies the addon |
 | enabled | boolean | Set to `false` to disable one of Heir's built-in default addons (`coredns`, `flannel`). Only applies to a built-in addon |
-| install | [HelmChartSpec](../addon#helmchart) | Adds an entirely new Helm chart for an addon that isn't one of Heir's built-in defaults. Mirrors a [`HelmChart`](../addon#helmchart) resource's own spec exactly |
+| install | [HelmChartSpec](../addon/helm-controller) | Adds an entirely new Helm chart for an addon that isn't one of Heir's built-in defaults. Mirrors a [`HelmChart`](../addon/helm-controller) resource's own spec exactly |
 | override.values | [ValuesSpec](#addon-values) | Customizes one of Heir's built-in default addons' Helm values, without changing its chart source |
 
 #### Addon values

@@ -16,7 +16,7 @@ different ones depending on the command:
 
 Whenever a command's help text says "management cluster," its `--kubeconfig` flag (or the `$KUBECONFIG` environment variable, or
 `$HOME/.kube/config` if neither is set) must point at the cluster running Heir. Whenever it says "tenant cluster," that same flag must point
-at the cluster produced by a `Runtime` instead, fetch one with [`heir provision clusterKubeconfig`](./cluster#heir-provision-kubeconfig).
+at the cluster produced by a `Runtime` instead, fetch one with [`heir get cluster --save-kubeconfig`](./cluster#heir-get-cluster).
 Every command in this reference notes which one it expects.
 
 ## Commands

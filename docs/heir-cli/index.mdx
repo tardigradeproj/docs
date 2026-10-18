@@ -1,0 +1,24 @@
+import DocCardList from '@theme/DocCardList';
+
+# Heir CLI manual
+
+`heir` is the command-line tool for creating and operating Kubernetes clusters with Heir. This section documents every user-facing `heir`
+command: what it does, what each flag means, and which cluster it talks to.
+
+Heir involves three different things that are easy to conflate, because several `heir` commands take a `--kubeconfig` flag that points at
+different ones depending on the command:
+
+- **Management cluster** — the Kubernetes cluster where Heir itself runs. It hosts the `Runtime` custom resources that describe each tenant
+  control plane, and the controllers that reconcile them.
+- **Tenant cluster** — the Kubernetes cluster that gets created for you, described by a `Runtime`. This is the cluster your own applications
+  run on. Its control plane runs as a pod on the management cluster; its worker nodes are real machines you join to it.
+- **Worker node** — a machine (bare metal or VM) joined to a tenant cluster, where your workloads actually get scheduled.
+
+Whenever a command's help text says "management cluster," its `--kubeconfig` flag (or the `$KUBECONFIG` environment variable, or
+`$HOME/.kube/config` if neither is set) must point at the cluster running Heir. Whenever it says "tenant cluster," that same flag must point
+at the cluster produced by a `Runtime` instead, fetch one with [`heir provision clusterKubeconfig`](./cluster#heir-provision-kubeconfig).
+Every command in this reference notes which one it expects.
+
+## Commands
+
+<DocCardList />

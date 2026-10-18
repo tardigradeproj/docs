@@ -1,0 +1,45 @@
+---
+sidebar_position: 3
+description: Join a machine to a tenant cluster as a worker node, and run the worker agent.
+---
+
+# worker
+
+Commands run on a worker machine itself, rather than against a remote cluster, neither takes a `--kubeconfig` flag.
+
+## heir provision worker
+
+Prepares a machine to join a tenant cluster as a worker node: saves the bootstrap token, installs the `heir` binary onto the machine,
+and registers a systemd unit (`heir.service`) that keeps the node running and re-joined across reboots. Run this **on the worker machine
+itself**, not against a remote cluster.
+
+```
+heir provision worker [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--token` | _(required)_ | The bootstrap token (a worker join token's saved kubeconfig) to use. |
+| `--kubelet-extra-args` | _(none)_ | Extra `key=value` arguments to pass through to `kubelet`. |
+
+```sh
+heir provision worker --token "$(cat new-node-token.yaml)"
+```
+
+In practice you'll normally pass `--token` the contents of the file written by
+[`heir get workerJoinToken new-node --save-token new-node-token.yaml`](./worker-join-token#heir-get-token). Once this command finishes, the
+systemd unit it installs takes over — see `heir worker` below.
+
+## heir worker
+
+The long-running worker node agent. This is installed and started for you as a systemd service by `heir provision worker` above — you
+shouldn't normally need to run it by hand. It brings up the local API server proxy, bootstraps `kubelet`'s TLS credentials, and keeps the
+node's components running.
+
+```
+heir worker [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--kubelet-extra-args` | _(none)_ | Extra `key=value` arguments to pass through to `kubelet`. |

@@ -1,0 +1,62 @@
+---
+sidebar_position: 1
+description: Create a tenant cluster, fetch its kubeconfig, and inspect it.
+---
+
+# cluster
+
+Commands for creating a tenant cluster, fetching the tenant cluster's own kubeconfig, and inspecting it.
+
+## heir provision cluster
+
+Full name: `runtimeCluster`. Creates a `Runtime` on the management cluster, which causes Heir to stand up a new tenant control plane. Talks to
+the **management cluster**.
+
+```
+heir provision runtimeCluster <name> [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--namespace` | `default` | Namespace on the management cluster to create the `Runtime` in. |
+| `--kubeconfig` | `$KUBECONFIG` or `$HOME/.kube/config` | Kubeconfig of the **management** cluster. |
+| `--set` | _(none)_ | Set a field on the `Runtime` spec, Helm-`--set`-style. Repeatable, and comma-separated values are supported in one flag. Paths are relative to `spec` (e.g. `cluster.apiServer.sans[0]=foo`). |
+| `--wait` | `true` | Block until the `Runtime`'s `Available` condition is `True` before returning. |
+| `--timeout` | `5m` | How long `--wait` blocks before giving up (the `Runtime` keeps provisioning in the background either way). |
+
+The tenant control plane's externally-reachable address has no default, you must set it explicitly via `--set`, for both the API server and
+the plane tunnel:
+
+```sh
+heir provision runtimeCluster my-cluster \
+  --set cluster.controlPlaneExternalEndpoint.apiServer.host=api.example.com \
+  --set cluster.controlPlaneExternalEndpoint.apiServer.port=6443 \
+  --set cluster.controlPlaneExternalEndpoint.planeTunnel.host=tunnel.example.com \
+  --set cluster.controlPlaneExternalEndpoint.planeTunnel.port=6444
+```
+
+See [Runtime](../configuration-options/runtime) for the full set of fields `--set` can target.
+
+Once this finishes, fetch the tenant cluster's kubeconfig with `heir get cluster my-cluster --save-kubeconfig my-cluster-kubeconfig.yaml`, below.
+
+
+## heir get cluster
+
+Full name: `runtimeCluster`. Lists (or shows) tenant control planes known to the management cluster. Talks to the **management cluster**.
+
+```
+heir get runtimeCluster [name] [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--namespace` | `default` | Namespace the control plane was provisioned in. |
+| `--kubeconfig` | `$KUBECONFIG` or `$HOME/.kube/config` | Kubeconfig of the **management** cluster. |
+| `--server` | _(unset)_ | Override the server URL baked into the saved kubeconfig, useful for local development (e.g. `https://127.0.0.1:30080`). |
+| `-o`, `--save-kubeconfig` | _(none)_ | Save the named cluster's admin kubeconfig to this path. Requires a `name` argument, it errors if you pass it without one. |
+
+
+```sh
+heir get runtimeCluster
+heir get cluster my-cluster
+```

@@ -1,0 +1,70 @@
+---
+sidebar_position: 2
+description: Create, inspect, and delete the bootstrap token a worker node uses to join a tenant cluster.
+---
+
+# workerJoinToken
+
+Commands for creating, inspecting, and deleting the bootstrap token a worker node uses to join a tenant cluster.
+
+## heir provision token
+
+Full name: `workerJoinToken`. Creates a short-lived token that a worker node can use to join a tenant cluster. Talks to the
+**tenant cluster**.
+
+```
+heir provision workerJoinToken <name> [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--ttl` | `3h` | How long the issued token stays valid, starting from when it's issued. |
+| `--kubeconfig` | `$KUBECONFIG` or `$HOME/.kube/config` | Kubeconfig of the **tenant** cluster (not the management cluster). |
+| `--wait` | `true` | Block until the token's `Ready` condition is `True`. |
+| `--timeout` | `1m` | How long `--wait` blocks before giving up. |
+
+```sh
+heir provision workerJoinToken new-node --kubeconfig my-cluster-kubeconfig.yaml
+```
+
+`<name>` identifies this token (and the `WorkerJoinToken` object backing it), it doesn't have to match the node's eventual hostname. After
+creating it, retrieve the actual token material with `heir get workerJoinToken <name> --save-token <path>`, below.
+
+## heir get token
+
+Full name: `workerJoinToken`. Lists (or shows) worker join tokens on a tenant cluster, and can save a token's bootstrap kubeconfig to a file.
+Talks to the **tenant cluster**.
+
+```
+heir get workerJoinToken [name] [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--kubeconfig` | `$KUBECONFIG` or `$HOME/.kube/config` | Kubeconfig of the **tenant** cluster. |
+| `-o`, `--save-token` | _(none)_ | Save the named token's bootstrap kubeconfig to this path. Requires a `name` argument — it errors if you pass it without one. |
+
+```sh
+heir get workerJoinToken
+heir get token new-node --save-token new-node-token.yaml
+```
+
+The file written by `--save-token` is a base64-encoded bootstrap kubeconfig, hand it directly to [`heir provision worker --token`](./worker#heir-provision-worker).
+
+## heir delete token
+
+Full name: `workerJoinToken`. Deletes a worker join token from a tenant cluster. Unlike some delete operations, this is **not** idempotent —
+deleting a token that doesn't exist is an error, not a no-op. Talks to the **tenant cluster**.
+
+```
+heir delete workerJoinToken <name> [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--kubeconfig` | `$KUBECONFIG` or `$HOME/.kube/config` | Kubeconfig of the **tenant** cluster. |
+
+```sh
+heir delete token new-node --kubeconfig my-cluster-kubeconfig.yaml
+```
+
